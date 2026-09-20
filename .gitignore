@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+# Cliente de Prisma generado (se recrea con el postinstall / `prisma generate`)
+/src/generated
+
 # TypeScript build cache
 *.tsbuildinfo
 
