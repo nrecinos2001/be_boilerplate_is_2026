@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@Prisma/services';
-import { UsernameAlreadyTakenError } from '@Users/errors';
+import { EmailAlreadyTakenError } from '@Users/errors';
 import { Prisma, type User } from '@PrismaClient';
 
 /** Código de Prisma para violación de restricción única. */
 const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
 
 export interface CreateUserData {
-  username: string;
+  email: string;
   passwordHash: string;
 }
 
@@ -24,22 +24,24 @@ export class UserRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * @throws {UsernameAlreadyTakenError} si el username ya existe.
+   * @throws {EmailAlreadyTakenError} si el email ya está registrado.
    *
    * Se deja que la base decida la unicidad en vez de consultar antes: un
    * `findUnique` previo tiene una condición de carrera entre la lectura y el
    * insert. El código P2002 de Prisma se traduce a un error de dominio para
    * que la capa de servicio no tenga que conocer los códigos del ORM.
    */
-  async create(data: CreateUserData): Promise<User> {
+  async create({ email, passwordHash }: CreateUserData): Promise<User> {
     try {
-      return await this.prisma.user.create({ data });
+      return await this.prisma.user.create({
+        data: { email: this.normalizeEmail(email), passwordHash },
+      });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === UNIQUE_CONSTRAINT_VIOLATION
       ) {
-        throw new UsernameAlreadyTakenError(data.username);
+        throw new EmailAlreadyTakenError(email);
       }
       throw error;
     }
@@ -49,13 +51,15 @@ export class UserRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  findByUsername(username: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { username } });
+  findByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findUnique({
+      where: { email: this.normalizeEmail(email) },
+    });
   }
 
-  existsByUsername(username: string): Promise<boolean> {
+  existsByEmail(email: string): Promise<boolean> {
     return this.prisma.user
-      .count({ where: { username } })
+      .count({ where: { email: this.normalizeEmail(email) } })
       .then((count) => count > 0);
   }
 
@@ -69,5 +73,18 @@ export class UserRepository {
 
   deleteById(id: string): Promise<User> {
     return this.prisma.user.delete({ where: { id } });
+  }
+
+  /**
+   * Los emails se persisten y se consultan en minúsculas.
+   *
+   * El índice único de Postgres es sensible a mayúsculas, así que sin esto
+   * "Demo@mail.com" y "demo@mail.com" serían dos cuentas distintas y el login
+   * fallaría según cómo el usuario escribiera su email. Va en el repositorio a
+   * propósito: es el único punto por el que pasan todas las lecturas y
+   * escrituras, así que ningún llamador puede saltearse la normalización.
+   */
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 }

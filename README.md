@@ -243,15 +243,15 @@ npm run db:reset
 
 [prisma/seed.ts](prisma/seed.ts) crea un usuario de prueba mediante `upsert`, así que se puede correr las veces que haga falta:
 
-| Usuario | Contraseña |
+| Email | Contraseña |
 |---|---|
-| `demo` | `Demo1234!` |
+| `demo@example.com` | `Demo1234!` |
 
 ---
 
 ## Autenticación
 
-Esquema **access token + refresh token**, solo con usuario y contraseña.
+Esquema **access token + refresh token**, solo con email y contraseña.
 
 - **Access token** — JWT firmado con HS256, vida corta (15 min). Viaja en `Authorization: Bearer <token>`. Es stateless: no se consulta la base para validar la firma.
 - **Refresh token** — string opaco de 32 bytes aleatorios, con vida larga (7 días). Sirve únicamente para pedir un access token nuevo.
@@ -262,9 +262,11 @@ Esquema **access token + refresh token**, solo con usuario y contraseña.
 
 **Los refresh tokens se guardan hasheados con SHA-256**, no con bcrypt. Es deliberado: son 32 bytes aleatorios, o sea alta entropía, así que no hay un espacio de búsqueda que justifique un KDF lento; además hace falta buscarlos por hash en un índice (bcrypt usa un salt distinto por hash, así que no se puede indexar). bcrypt queda para las contraseñas, que sí son de baja entropía. Si se filtra la base, los refresh tokens emitidos no son utilizables.
 
+**El email se normaliza a minúsculas y sin espacios.** El índice único de Postgres es sensible a mayúsculas, así que sin normalizar `Demo@mail.com` y `demo@mail.com` serían dos cuentas distintas y el login fallaría según cómo el usuario escribiera su email. Se normaliza en dos lugares a propósito: el decorador [`@IsNormalizedEmail()`](src/common/decorators/is-normalized-email.decorator.ts) cubre lo que entra por HTTP —y tiene que correr **antes** de `@IsEmail`, o un email con espacios se rechaza con un 400 antes de poder limpiarlo—, y `UserRepository` normaliza de nuevo al leer y escribir, para cubrir a cualquier llamador interno que no pase por un DTO.
+
 **Rotación con detección de reúso.** Cada `POST /auth/refresh` revoca el token usado y emite uno nuevo. Si llega un refresh token que ya fue canjeado, se asume robo y se revocan **todas** las sesiones del usuario.
 
-**Login que no filtra información.** Usuario inexistente, contraseña incorrecta y cuenta inactiva devuelven exactamente el mismo `401` con el mismo mensaje. Cuando el usuario no existe igual se ejecuta un `bcrypt.compare` contra un hash descartable, para que la diferencia de tiempo de respuesta no permita enumerar qué usuarios están registrados.
+**Login que no filtra información.** Email no registrado, contraseña incorrecta y cuenta inactiva devuelven exactamente el mismo `401` con el mismo mensaje. Cuando el email no existe igual se ejecuta un `bcrypt.compare` contra un hash descartable, para que la diferencia de tiempo de respuesta no permita enumerar qué emails tienen cuenta.
 
 **Todo cerrado por defecto.** `JwtAuthGuard` está registrado como guard global; las rutas públicas se abren explícitamente con `@Public()`. Olvidarse del decorador deja el endpoint protegido, que es el error seguro.
 
@@ -287,8 +289,8 @@ Base: `http://localhost:3000/api/v1` · Documentación interactiva: `http://loca
 | Método | Ruta | Auth | Código | Descripción |
 |---|---|---|---|---|
 | `GET` | `/` | — | `200` | Health check |
-| `POST` | `/users` | — | `201` | Registra un usuario |
-| `POST` | `/auth/login` | — | `200` | Inicia sesión |
+| `POST` | `/users` | — | `201` | Registra un usuario con email y contraseña |
+| `POST` | `/auth/login` | — | `200` | Inicia sesión con email y contraseña |
 | `POST` | `/auth/refresh` | — | `200` | Renueva el par de tokens |
 | `POST` | `/auth/logout` | — | `204` | Cierra la sesión |
 | `GET` | `/auth/me` | Bearer | `200` | Usuario autenticado |
@@ -304,27 +306,27 @@ BASE=http://localhost:3000/api/v1
 ```bash
 curl -X POST $BASE/users \
   -H 'Content-Type: application/json' \
-  -d '{"username":"nestor","password":"Str0ngPass"}'
+  -d '{"email":"nestor@example.com","password":"Str0ngPass"}'
 ```
 
 ```jsonc
 // 201 Created
 {
   "id": "29bda5e8-e0c8-4ec2-bc7f-94c41c3c0140",
-  "username": "nestor",
+  "email": "nestor@example.com",
   "isActive": true,
   "createdAt": "2026-09-20T17:29:59.852Z"
 }
 ```
 
-La contraseña debe tener entre 8 y 72 caracteres, con al menos una minúscula, una mayúscula y un número. Si el usuario ya existe, la respuesta es `409 Conflict`.
+La contraseña debe tener entre 8 y 72 caracteres, con al menos una minúscula, una mayúscula y un número. Si el email ya está registrado, la respuesta es `409 Conflict`.
 
 **Login**
 
 ```bash
 curl -X POST $BASE/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"demo","password":"Demo1234!"}'
+  -d '{"email":"demo@example.com","password":"Demo1234!"}'
 ```
 
 ```jsonc
@@ -333,7 +335,7 @@ curl -X POST $BASE/auth/login \
   "accessToken": "eyJhbGciOiJIUzI1NiIs...",
   "refreshToken": "dbfcf084b4a238cf9afaaa2f800ee216...",
   "expiresIn": 900,
-  "user": { "id": "...", "username": "demo", "isActive": true, "createdAt": "..." }
+  "user": { "id": "...", "email": "demo@example.com", "isActive": true, "createdAt": "..." }
 }
 ```
 
@@ -392,17 +394,17 @@ Antes los servicios inyectaban `PrismaService` directamente. Moverlo a repositor
 
 ### Errores de dominio en lugar de códigos del ORM
 
-El repositorio traduce el código `P2002` de Prisma (violación de unicidad) a un `UsernameAlreadyTakenError`, y el servicio lo convierte en un `409 Conflict`:
+El repositorio traduce el código `P2002` de Prisma (violación de unicidad) a un `EmailAlreadyTakenError`, y el servicio lo convierte en un `409 Conflict`:
 
 ```ts
 // repositories/user.repository.ts — sabe de Prisma, no sabe de HTTP
 if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-  throw new UsernameAlreadyTakenError(data.username);
+  throw new EmailAlreadyTakenError(email);
 }
 
 // services/users.service.ts — sabe de HTTP, no sabe de Prisma
-if (error instanceof UsernameAlreadyTakenError) {
-  throw new ConflictException('El nombre de usuario ya está en uso.');
+if (error instanceof EmailAlreadyTakenError) {
+  throw new ConflictException('El email ya está registrado.');
 }
 ```
 
@@ -419,6 +421,7 @@ import { AuthService, TokenService } from '@Auth/services';
 import { UserRepository }            from '@Users/repositories';
 import { CreateUserDto }             from '@Users/dto';
 import { Public, CurrentUser }       from '@Auth/decorators';
+import { IsNormalizedEmail }        from '@Common/decorators';
 import type { EnvConfig }            from '@Config';
 import type { User }                 from '@PrismaClient';
 ```
@@ -431,6 +434,7 @@ Definidos en [tsconfig.json](tsconfig.json):
 | `@Users`, `@Users/*` | `src/users/…` |
 | `@Health`, `@Health/*` | `src/health/…` |
 | `@Prisma`, `@Prisma/*` | `src/prisma/…` |
+| `@Common/*` | `src/common/*/index.ts` |
 | `@Config` | `src/config/index.ts` |
 | `@PrismaClient` | Cliente generado de Prisma |
 
@@ -471,6 +475,8 @@ nest build && tsc-alias -p tsconfig.build.json
 └── src/
     ├── main.ts                   # Bootstrap: prefijo, validación, Swagger
     ├── app.module.ts             # Módulo raíz y guard global
+    ├── common/
+    │   └── decorators/           # IsNormalizedEmail (validación compartida)
     ├── config/
     │   ├── env.validation.ts     # Validación de variables de entorno
     │   └── index.ts
@@ -487,7 +493,7 @@ nest build && tsc-alias -p tsconfig.build.json
     │   ├── controllers/          # POST /users
     │   ├── services/             # Lógica de negocio, hasheo bcrypt
     │   ├── repositories/         # UserRepository: acceso a la tabla users
-    │   ├── errors/               # UsernameAlreadyTakenError
+    │   ├── errors/               # EmailAlreadyTakenError
     │   ├── dto/
     │   ├── users.module.ts
     │   └── index.ts

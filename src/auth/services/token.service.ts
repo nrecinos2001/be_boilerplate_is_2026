@@ -41,7 +41,7 @@ export class TokenService {
   async issueTokenPair(user: User): Promise<TokenPair> {
     const payload: AccessTokenPayload = {
       sub: user.id,
-      username: user.username,
+      email: user.email,
     };
 
     const accessToken = await this.jwtService.signAsync(payload);

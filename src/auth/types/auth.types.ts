@@ -2,7 +2,7 @@
 export interface AccessTokenPayload {
   /** ID del usuario (claim estándar `sub`). */
   sub: string;
-  username: string;
+  email: string;
 }
 
 /** Par de tokens devuelto por login y refresh. */

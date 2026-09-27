@@ -1,1 +1,1 @@
-export * from './username-already-taken.error.js';
+export * from './email-already-taken.error.js';

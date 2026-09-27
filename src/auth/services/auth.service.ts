@@ -7,11 +7,11 @@ import type { TokenPair } from '@Auth/types';
 import type { User } from '@PrismaClient';
 
 /**
- * Hash descartable con el que se compara cuando el usuario no existe.
+ * Hash descartable con el que se compara cuando el email no existe.
  *
- * Sin esto, un login contra un usuario inexistente respondería muchísimo más
- * rápido que uno contra un usuario real (no habría bcrypt de por medio), y esa
- * diferencia de tiempo permite enumerar qué usuarios están registrados.
+ * Sin esto, un login contra un email no registrado respondería muchísimo más
+ * rápido que uno contra una cuenta real (no habría bcrypt de por medio), y esa
+ * diferencia de tiempo permite enumerar qué emails están registrados.
  * Corresponde a un valor aleatorio; nunca va a matchear.
  */
 const DUMMY_HASH = '$2b$12$C6UzMDM.H6dfI/f/IKcEe.7ttRFZIqjvBeT3M1kRDRm1gy9cKr9Wy';
@@ -24,19 +24,19 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto): Promise<{ user: User; tokens: TokenPair }> {
-    const user = await this.validateCredentials(dto.username, dto.password);
+    const user = await this.validateCredentials(dto.email, dto.password);
     return { user, tokens: await this.tokenService.issueTokenPair(user) };
   }
 
   /**
-   * Valida usuario y contraseña.
+   * Valida email y contraseña.
    *
-   * Responde el mismo 401 genérico en los tres casos posibles (usuario
-   * inexistente, contraseña incorrecta, cuenta inactiva) para no filtrar qué
-   * usuarios existen.
+   * Responde el mismo 401 genérico en los tres casos posibles (email no
+   * registrado, contraseña incorrecta, cuenta inactiva) para no filtrar qué
+   * emails tienen cuenta.
    */
-  async validateCredentials(username: string, password: string): Promise<User> {
-    const user = await this.usersService.findByUsername(username);
+  async validateCredentials(email: string, password: string): Promise<User> {
+    const user = await this.usersService.findByEmail(email);
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_HASH);

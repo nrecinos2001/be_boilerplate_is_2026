@@ -2,7 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import bcrypt from 'bcrypt';
 import { UserRepository } from '@Users/repositories';
-import { UsernameAlreadyTakenError } from '@Users/errors';
+import { EmailAlreadyTakenError } from '@Users/errors';
 import type { CreateUserDto } from '@Users/dto';
 import type { EnvConfig } from '@Config';
 import type { User } from '@PrismaClient';
@@ -23,22 +23,22 @@ export class UsersService {
     this.saltRounds = configService.get('BCRYPT_SALT_ROUNDS', { infer: true });
   }
 
-  async create({ username, password }: CreateUserDto): Promise<User> {
+  async create({ email, password }: CreateUserDto): Promise<User> {
     const passwordHash = await this.hashPassword(password);
 
     try {
-      return await this.userRepository.create({ username, passwordHash });
+      return await this.userRepository.create({ email, passwordHash });
     } catch (error) {
       // Traduce el error de dominio del repositorio a una excepción HTTP.
-      if (error instanceof UsernameAlreadyTakenError) {
-        throw new ConflictException('El nombre de usuario ya está en uso.');
+      if (error instanceof EmailAlreadyTakenError) {
+        throw new ConflictException('El email ya está registrado.');
       }
       throw error;
     }
   }
 
-  findByUsername(username: string): Promise<User | null> {
-    return this.userRepository.findByUsername(username);
+  findByEmail(email: string): Promise<User | null> {
+    return this.userRepository.findByEmail(email);
   }
 
   findById(id: string): Promise<User | null> {

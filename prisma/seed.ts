@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 
-const DEMO_USERNAME = 'demo';
+const DEMO_EMAIL = 'demo@example.com';
 const DEMO_PASSWORD = 'Demo1234!';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
@@ -14,12 +14,12 @@ async function main() {
 
   // `upsert` hace el seed idempotente: se puede correr las veces que haga falta.
   const user = await prisma.user.upsert({
-    where: { username: DEMO_USERNAME },
+    where: { email: DEMO_EMAIL },
     update: {},
-    create: { username: DEMO_USERNAME, passwordHash },
+    create: { email: DEMO_EMAIL, passwordHash },
   });
 
-  console.log(`Usuario demo listo: ${user.username} / ${DEMO_PASSWORD}`);
+  console.log(`Usuario demo listo: ${user.email} / ${DEMO_PASSWORD}`);
 }
 
 try {

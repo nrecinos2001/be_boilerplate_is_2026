@@ -11,8 +11,8 @@ export class UserResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ example: 'nestor' })
-  username!: string;
+  @ApiProperty({ example: 'nestor@example.com', format: 'email' })
+  email!: string;
 
   @ApiProperty()
   isActive!: boolean;
@@ -23,7 +23,7 @@ export class UserResponseDto {
   static fromEntity(user: User): UserResponseDto {
     return {
       id: user.id,
-      username: user.username,
+      email: user.email,
       isActive: user.isActive,
       createdAt: user.createdAt,
     };

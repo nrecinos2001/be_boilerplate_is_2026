@@ -1,24 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsNormalizedEmail } from '@Common/decorators';
 
 export class CreateUserDto {
   @ApiProperty({
-    description: 'Nombre de usuario único. Solo letras, números, punto, guion y guion bajo.',
-    example: 'nestor',
-    minLength: 3,
-    maxLength: 32,
+    description: 'Email del usuario. Se normaliza a minúsculas y sin espacios.',
+    example: 'nestor@example.com',
+    format: 'email',
+    maxLength: 254,
   })
-  @IsString()
-  @MinLength(3, { message: 'El usuario debe tener al menos 3 caracteres.' })
-  @MaxLength(32, { message: 'El usuario no puede superar los 32 caracteres.' })
-  @Matches(/^[a-zA-Z0-9._-]+$/, {
-    message: 'El usuario solo admite letras, números, punto, guion y guion bajo.',
-  })
-  username!: string;
+  @IsNormalizedEmail()
+  email!: string;
 
   @ApiProperty({
     description: 'Contraseña. Debe incluir al menos una minúscula, una mayúscula y un número.',
-    example: 'Str0ngPass!',
+    example: 'Str0ngPass',
     minLength: 8,
     maxLength: 72,
   })
