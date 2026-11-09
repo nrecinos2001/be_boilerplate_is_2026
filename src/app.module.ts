@@ -7,6 +7,7 @@ import { HealthModule } from '@Health';
 import { PrismaModule } from '@Prisma';
 import { UsersModule } from '@Users';
 import { validateEnv } from '@Config';
+import { MembershipModule } from './membership/membership.module.js';
 
 @Module({
   imports: [
@@ -20,10 +21,12 @@ import { validateEnv } from '@Config';
     HealthModule,
     UsersModule,
     AuthModule,
+    MembershipModule, // <--- Aquí va correctamente en el array principal de imports del módulo
   ],
+  controllers: [],
   providers: [
     {
-      // Todo cerrado por defecto: las rutas públicas se abren con @Public().
+      // Todo cerrado por defecto: Las rutas públicas se abren con @Public().
       provide: APP_GUARD,
       useExisting: JwtAuthGuard,
     },

@@ -32,7 +32,17 @@ async function bootstrap() {
     .setTitle('SI Backend Boilerplate')
     .setDescription('API REST con autenticación por usuario y contraseña.')
     .setVersion('1.0')
-    .addBearerAuth()
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Ingresa tu token de acceso',
+        in: 'header',
+      },
+      'access-token',
+    )
     .build();
 
   SwaggerModule.setup(
