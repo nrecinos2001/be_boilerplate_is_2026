@@ -1,29 +1,39 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+// src/membership/services/membership.service.ts
+import { Injectable } from '@nestjs/common';
 import { MembershipRepository } from '../repositories/membership.repository.js';
+import type { MembershipStatusResponseDto } from '../dto/membership-status-response.dto.js';
 
 @Injectable()
 export class MembershipService {
   constructor(private readonly membershipRepository: MembershipRepository) {}
 
-  async checkMembershipStatus(userId: string) {
+  async checkMembershipStatus(
+    userId: string,
+  ): Promise<MembershipStatusResponseDto> {
     const membership = await this.membershipRepository.findByUserId(userId);
 
+    // Caso "Sin membresía": 200 con el resto en null (no 404).
     if (!membership) {
-      throw new NotFoundException(`No se encontró ninguna membresía registrada para el usuario con ID: ${userId}`);
+      return {
+        id: null,
+        planName: null,
+        status: 'Sin membresía',
+        endDate: null,
+        remainingClasses: null,
+      };
     }
 
-    const currentDate = new Date();
-    const isActive = new Date(membership.endDate) >= currentDate;
+    // ASUMIDO: una membresía CANCELLED no cuenta como vigente aunque su fecha no haya pasado.
+    const notExpired = new Date(membership.endDate).getTime() >= Date.now();
+    const isActive = notExpired && membership.status !== 'CANCELLED';
 
     return {
-      userId: membership.userId,
-      status: isActive ? 'ACTIVE' : 'EXPIRED',
-      startDate: membership.startDate,
+      id: membership.id,
+      planName: membership.plan.name,
+      status: isActive ? 'Vigente' : 'Vencida',
       endDate: membership.endDate,
-      plan: {
-        name: membership.plan.name,
-        price: membership.plan.price,
-      },
+      // TODO: Membership no guarda clases usadas/restantes. Definir campo o tabla con el equipo.
+      remainingClasses: null,
     };
   }
 }

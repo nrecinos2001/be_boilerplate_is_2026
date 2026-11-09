@@ -3,8 +3,10 @@
 //   200 { id, planName, status: 'Vigente' | 'Vencida' | 'Sin membresía', endDate, remainingClasses }
 //   'Sin membresía' => 200 con status 'Sin membresía' y el resto en null
 //   401 sin token
-// OJO: los campos de prisma.plan / prisma.membership siguen el esquema del documento.
-// Si en la migración de Majano se llaman distinto, ajusta solo los dos helpers de abajo.
+// Esquema real (migración de Majano):
+//   Plan:       id, name (unique), price, durationDays (Int)
+//   Membership: id, userId, planId, startDate, endDate, status ('ACTIVE' | 'EXPIRED' | 'CANCELLED')
+//   No existe ningún campo de clases (ni en Plan ni en Membership).
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -14,7 +16,7 @@ import { PrismaService } from '../src/prisma/services/index.js';
 
 const BASE = '/api/v1';
 const PASSWORD = 'Demo1234!';
-const DAY = 864e5;
+const DAY = 24 * 60 * 60 * 1000;
 
 describe('GET /memberships/me', () => {
   let app: INestApplication;
@@ -28,29 +30,53 @@ describe('GET /memberships/me', () => {
 
   async function newUser(tag: string) {
     const email = `${tag}-${stamp}@test.com`;
-    await request(app.getHttpServer()).post(`${BASE}/users`).send({ email, password: PASSWORD });
-    const login = await request(app.getHttpServer()).post(`${BASE}/auth/login`).send({ email, password: PASSWORD });
-    const me = await request(app.getHttpServer()).get(`${BASE}/auth/me`).set('Authorization', `Bearer ${login.body.accessToken}`);
-    return { token: login.body.accessToken as string, id: me.body.id as string };
+    await request(app.getHttpServer())
+      .post(`${BASE}/users`)
+      .send({ email, password: PASSWORD });
+    const login = await request(app.getHttpServer())
+      .post(`${BASE}/auth/login`)
+      .send({ email, password: PASSWORD });
+    const me = await request(app.getHttpServer())
+      .get(`${BASE}/auth/me`)
+      .set('Authorization', `Bearer ${login.body.accessToken}`);
+    return {
+      token: login.body.accessToken as string,
+      id: me.body.id as string,
+    };
   }
 
-  // --- helpers a ajustar si el esquema de Majano difiere ---
-  const makePlan = (tag: string, type: 'MENSUAL' | 'CLASES_SUELTAS') =>
+  // --- helpers alineados con el esquema de Majano ---
+  const makePlan = (tag: string) =>
     prisma.plan.create({
-      data: { name: `${tag}-${stamp}`, type, price: 30, durationDays: type === 'MENSUAL' ? 30 : null, classCount: type === 'CLASES_SUELTAS' ? 10 : null },
+      data: {
+        name: `${tag}-${stamp}`,
+        price: 30,
+        durationDays: 30,
+      },
     });
-  const makeMembership = (userId: string, planId: string, endOffsetDays: number | null, remainingClasses: number | null) =>
+
+  const makeMembership = (
+    userId: string,
+    planId: string,
+    daysToEnd: number,
+    status?: 'ACTIVE' | 'EXPIRED' | 'CANCELLED',
+  ) =>
     prisma.membership.create({
       data: {
-        userId, planId, startDate: new Date(Date.now() - 10 * DAY),
-        endDate: endOffsetDays === null ? null : new Date(Date.now() + endOffsetDays * DAY),
-        remainingClasses,
+        userId,
+        planId,
+        startDate: new Date(Date.now() - 30 * DAY),
+        endDate: new Date(Date.now() + daysToEnd * DAY),
+        status: status ?? (daysToEnd < 0 ? 'EXPIRED' : 'ACTIVE'),
       },
     });
 
   beforeAll(async () => {
-    const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const mod = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
     app = mod.createNestApplication();
+    // Replicar aquí lo que main.ts configure (prefijo, versionado, pipes, filtros).
     app.setGlobalPrefix('api/v1');
     await app.init();
     prisma = app.get(PrismaService);
@@ -63,13 +89,18 @@ describe('GET /memberships/me', () => {
   it('Sin membresía: 200 con status "Sin membresía" y el resto en null', async () => {
     const u = await newUser('sin');
     const res = await get(u.token).expect(200);
-    expect(res.body).toMatchObject({ status: 'Sin membresía', planName: null, endDate: null, remainingClasses: null });
+    expect(res.body).toMatchObject({
+      status: 'Sin membresía',
+      planName: null,
+      endDate: null,
+      remainingClasses: null,
+    });
   });
 
   it('Vigente: plan mensual con vencimiento a futuro', async () => {
     const u = await newUser('vig');
-    const plan = await makePlan('Mensual-vig', 'MENSUAL');
-    await makeMembership(u.id, plan.id, 20, null);
+    const plan = await makePlan('Mensual-vig');
+    await makeMembership(u.id, plan.id, 20);
     const res = await get(u.token).expect(200);
     expect(res.body.status).toBe('Vigente');
     expect(res.body.planName).toBe(plan.name);
@@ -78,45 +109,68 @@ describe('GET /memberships/me', () => {
 
   it('Vencida: plan mensual con fecha de vencimiento pasada', async () => {
     const u = await newUser('venc');
-    const plan = await makePlan('Mensual-venc', 'MENSUAL');
-    await makeMembership(u.id, plan.id, -10, null);
+    const plan = await makePlan('Mensual-venc');
+    await makeMembership(u.id, plan.id, -10);
     const res = await get(u.token).expect(200);
     expect(res.body.status).toBe('Vencida');
   });
 
-  it('Plan por clases: Vigente con clases restantes, Vencida en 0', async () => {
-    const a = await newUser('cla-a');
-    const b = await newUser('cla-b');
-    const plan = await makePlan('Clases', 'CLASES_SUELTAS');
-    await makeMembership(a.id, plan.id, null, 3);
-    await makeMembership(b.id, plan.id, null, 0);
-    const resA = await get(a.token).expect(200);
-    expect(resA.body).toMatchObject({ status: 'Vigente', remainingClasses: 3 });
-    const resB = await get(b.token).expect(200);
-    expect(resB.body.status).toBe('Vencida');
+  // Ni Plan ni Membership guardan clases (no hay classCount ni clases usadas).
+  it.skip('Clases restantes', async () => {
+    // TODO: requiere campos de clases en Plan/Membership. Definir con el equipo.
   });
 
   it('Usa la membresía más reciente si el miembro tiene varias', async () => {
     const u = await newUser('multi');
-    const plan = await makePlan('Mensual-multi', 'MENSUAL');
-    await makeMembership(u.id, plan.id, -30, null);
+    const plan = await makePlan('Mensual-multi');
+    await makeMembership(u.id, plan.id, -30);
     await new Promise((r) => setTimeout(r, 20));
-    await makeMembership(u.id, plan.id, 15, null);
+    await makeMembership(u.id, plan.id, 15);
     const res = await get(u.token).expect(200);
     expect(res.body.status).toBe('Vigente');
   });
 
-  it('No permite consultar la membresía de otro miembro: no hay ruta con id', async () => {
+  it('403 al consultar la membresía de otro miembro', async () => {
     const owner = await newUser('dueno');
     const other = await newUser('otro');
-    const plan = await makePlan('Mensual-otro', 'MENSUAL');
-    await makeMembership(owner.id, plan.id, 20, null);
+    const plan = await makePlan('Mensual-otro');
+    await makeMembership(owner.id, plan.id, 20);
     const res = await request(app.getHttpServer())
-      .get(`${BASE}/memberships/${owner.id}`)
-      .set('Authorization', `Bearer ${other.token}`);
-    expect([403, 404]).toContain(res.status);
+      .get(`${BASE}/memberships/${owner.id}/status`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(403);
     expect(JSON.stringify(res.body)).not.toContain(plan.name);
   });
 
-  afterAll(() => app.close());
+  it('200 al consultar mi propia membresía por id', async () => {
+    const u = await newUser('propio');
+    const plan = await makePlan('Mensual-propio');
+    await makeMembership(u.id, plan.id, 20);
+    const res = await request(app.getHttpServer())
+      .get(`${BASE}/memberships/${u.id}/status`)
+      .set('Authorization', `Bearer ${u.token}`)
+      .expect(200);
+    expect(res.body.status).toBe('Vigente');
+  });
+
+  it('401 sin token en la ruta con id', async () => {
+    await request(app.getHttpServer())
+      .get(`${BASE}/memberships/00000000-0000-4000-8000-000000000000/status`)
+      .expect(401);
+  });
+
+  afterAll(async () => {
+    try {
+      // Las membresías se borran en cascada al borrar el usuario; el plan es Restrict.
+      await prisma.user.deleteMany({
+        where: { email: { endsWith: `-${stamp}@test.com` } },
+      });
+      await prisma.plan.deleteMany({
+        where: { name: { endsWith: `-${stamp}` } },
+      });
+    } catch {
+      // limpieza best-effort
+    }
+    await app.close();
+  });
 });
