@@ -21,10 +21,11 @@ interface ReadyStatusDto {
 @Roles(UserRole.COCINA)
 export class KitchenReadyController {
   constructor(private readonly kitchen: KitchenService) {}
-  @Get()
-getOrdersInPreparation(@CurrentUser() user: User) {
-  return this.kitchen.getOrdersInPreparation(user);
-}
+
+  @Get('in-preparation')
+  getOrdersInPreparation(@CurrentUser() user: User) {
+    return this.kitchen.getOrdersInPreparation(user);
+  }
 
   @Patch(':orderId/items/:itemId/status')
   markItemReady(

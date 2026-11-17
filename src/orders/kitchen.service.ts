@@ -1,3 +1,4 @@
+
 import {
   ConflictException,
   ForbiddenException,
@@ -22,6 +23,23 @@ export class KitchenService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  // H7: obtiene la sucursal cuando el usuario tiene una sola asignacion.
+  private async branch(user: User): Promise<string> {
+    const assignments = await this.db.staffBranch.findMany({
+      where: { userId: user.id },
+      select: { branchId: true },
+    });
+
+    if (assignments.length !== 1) {
+      throw new ForbiddenException(
+        'El personal debe estar asignado a una sola sucursal',
+      );
+    }
+
+    return assignments[0].branchId;
+  }
+
+  // H8: verifica que el usuario pertenezca a la sucursal de la comanda.
   private async checkBranch(user: User, branchId: string) {
     const assignment = await this.db.staffBranch.findUnique({
       where: {
@@ -39,6 +57,104 @@ export class KitchenService {
     }
   }
 
+  // H7: consulta las comandas recibidas.
+  async orders(user: User) {
+    const branchId = await this.branch(user);
+
+    const orders = await this.db.order.findMany({
+      where: {
+        branchId,
+        status: 'RECEIVED',
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        createdAt: true,
+        account: {
+          select: {
+            table: {
+              select: {
+                number: true,
+              },
+            },
+          },
+        },
+        items: {
+          select: {
+            notes: true,
+          },
+        },
+      },
+    });
+
+    return {
+      items: orders.map((order) => ({
+        id: order.id,
+        tableNumber: order.account?.table.number.toString() ?? null,
+        orderNumber: order.orderNumber,
+        notes:
+          order.items
+            .map((item) => item.notes)
+            .filter((note): note is string => Boolean(note))
+            .join('; ') || null,
+        status: order.status,
+        createdAt: order.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  // H7: toma una comanda evitando que dos usuarios la tomen simultaneamente.
+  async take(user: User, id: string) {
+    const branchId = await this.branch(user);
+
+    const order = await this.db.order.findFirst({
+      where: {
+        id,
+        branchId,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Comanda no encontrada');
+    }
+
+    const result = await this.db.order.updateMany({
+      where: {
+        id,
+        branchId,
+        status: 'RECEIVED',
+      },
+      data: {
+        status: 'IN_PREPARATION',
+      },
+    });
+
+    if (result.count === 0) {
+      throw new ConflictException(
+        'La comanda ya fue tomada o no esta disponible',
+      );
+    }
+
+    this.kitchen.orderUpdated(branchId, {
+      id: order.id,
+      status: 'En preparacion',
+    });
+
+    return {
+      id: order.id,
+      status: 'En preparacion',
+    };
+  }
+
+  // H8: consulta comandas en preparacion de todas las sucursales asignadas.
   async getOrdersInPreparation(user: User) {
     if (user.role !== UserRole.COCINA) {
       throw new ForbiddenException(
@@ -90,6 +206,7 @@ export class KitchenService {
     });
   }
 
+  // H8: marca un platillo como listo.
   async markItemReady(
     user: User,
     orderId: string,
@@ -98,7 +215,7 @@ export class KitchenService {
   ) {
     if (user.role !== UserRole.COCINA) {
       throw new ForbiddenException(
-        'Solo cocina puede realizar esta acción',
+        'Solo cocina puede realizar esta accion',
       );
     }
 
@@ -126,7 +243,7 @@ export class KitchenService {
 
       if (order.status !== 'IN_PREPARATION') {
         throw new ConflictException(
-          'La comanda no está en preparación',
+          'La comanda no esta en preparacion',
         );
       }
 
@@ -140,7 +257,7 @@ export class KitchenService {
 
       if (item.status !== 'IN_PREPARATION') {
         throw new ConflictException(
-          'El platillo no está en preparación o ya fue terminado',
+          'El platillo no esta en preparacion o ya fue terminado',
         );
       }
 
@@ -166,6 +283,7 @@ export class KitchenService {
     };
   }
 
+  // H8: marca la comanda completa como lista cuando todos sus platillos terminaron.
   async markOrderReady(
     user: User,
     orderId: string,
@@ -173,7 +291,7 @@ export class KitchenService {
   ) {
     if (user.role !== UserRole.COCINA) {
       throw new ForbiddenException(
-        'Solo cocina puede realizar esta acción',
+        'Solo cocina puede realizar esta accion',
       );
     }
 
@@ -208,7 +326,7 @@ export class KitchenService {
 
       if (order.status !== 'IN_PREPARATION') {
         throw new ConflictException(
-          'La comanda no está en preparación',
+          'La comanda no esta en preparacion',
         );
       }
 
@@ -242,7 +360,7 @@ export class KitchenService {
     await this.notifications.send({
       recipientIds: [result.waiterId],
       title: 'Comanda lista',
-      message: `La comanda ${result.id} está lista para entregar.`,
+      message: `La comanda ${result.id} esta lista para entregar.`,
       sourceModule: NotificationSource.COCINA,
       referenceType: 'Order',
       referenceId: result.id,
@@ -259,6 +377,7 @@ export class KitchenService {
     };
   }
 
+  // H8: consulta las comandas listas asignadas al mesero.
   async readyForDelivery(user: User) {
     if (user.role !== UserRole.MESERO) {
       throw new ForbiddenException(
@@ -291,22 +410,29 @@ export class KitchenService {
         items: {
           include: {
             dish: {
-              select: { name: true },
+              select: {
+                name: true,
+              },
             },
           },
         },
         account: {
           include: {
             table: {
-              select: { number: true },
+              select: {
+                number: true,
+              },
             },
           },
         },
       },
-      orderBy: { updatedAt: 'asc' },
+      orderBy: {
+        updatedAt: 'asc',
+      },
     });
   }
 
+  // H8: confirma la entrega de una comanda por su mesero responsable.
   async markDelivered(user: User, orderId: string) {
     if (user.role !== UserRole.MESERO) {
       throw new ForbiddenException(
@@ -356,6 +482,14 @@ export class KitchenService {
         status: 'Entregado',
       };
     });
+
+    this.kitchen.orderUpdated(
+      (await this.db.order.findUnique({
+        where: { id: orderId },
+        select: { branchId: true },
+      }))!.branchId,
+      result,
+    );
 
     return result;
   }

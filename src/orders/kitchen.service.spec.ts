@@ -2,16 +2,208 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 
-import { UserRole } from '../generated/prisma/client.js';
+import {
+  OrderStatus,
+  UserRole,
+} from '../generated/prisma/client.js';
+import type { User } from '../generated/prisma/client.js';
+import type { PrismaService } from '../prisma/services/prisma.service.js';
 import { KitchenService } from './kitchen.service.js';
 
-describe('KitchenService - H8', () => {
+const USER_ID = '11111111-1111-4111-8111-111111111111';
+const BRANCH_ID = '22222222-2222-4222-8222-222222222222';
+const ORDER_ID = '33333333-3333-4333-8333-333333333333';
+const ITEM_ID = '44444444-4444-4444-8444-444444444444';
+
+describe('KitchenService - H7', () => {
   const user = {
-    id: 'user-1',
+    id: USER_ID,
+  } as User;
+
+  function createService(options: {
+    assignments?: { branchId: string }[];
+    orders?: any[];
+    existingOrder?: { id: string; status: OrderStatus } | null;
+    updateMany?: () => Promise<{ count: number }>;
+  } = {}) {
+    const db = {
+      staffBranch: {
+        findMany: vi.fn().mockResolvedValue(
+          options.assignments ?? [{ branchId: BRANCH_ID }],
+        ),
+      },
+      order: {
+        findMany: vi.fn().mockResolvedValue(options.orders ?? []),
+        findFirst: vi.fn().mockResolvedValue(
+          options.existingOrder === undefined
+            ? { id: ORDER_ID, status: OrderStatus.RECEIVED }
+            : options.existingOrder,
+        ),
+        updateMany: vi.fn(
+          options.updateMany ?? (() => Promise.resolve({ count: 1 })),
+        ),
+      },
+    };
+
+    const kitchen = {
+      orderUpdated: vi.fn(),
+    };
+
+    return {
+      service: new KitchenService(
+        db as any,
+        kitchen as any,
+        {} as any,
+      ),
+      db,
+      kitchen,
+    };
+  }
+
+  it('lista las comandas recibidas ordenadas por fecha ascendente', async () => {
+    const fecha = new Date('2026-11-08T10:00:00.000Z');
+
+    const { service, db } = createService({
+      orders: [
+        {
+          id: ORDER_ID,
+          orderNumber: 'COM-001',
+          status: OrderStatus.RECEIVED,
+          createdAt: fecha,
+          account: { table: { number: 4 } },
+          items: [{ notes: 'Sin cebolla' }, { notes: null }],
+        },
+      ],
+    });
+
+    const result = await service.orders(user);
+
+    expect(result.items).toEqual([
+      {
+        id: ORDER_ID,
+        tableNumber: '4',
+        orderNumber: 'COM-001',
+        notes: 'Sin cebolla',
+        status: OrderStatus.RECEIVED,
+        createdAt: fecha.toISOString(),
+      },
+    ]);
+
+    expect(db.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          branchId: BRANCH_ID,
+          status: OrderStatus.RECEIVED,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
+  });
+
+  it('devuelve una lista vacia cuando no hay comandas recibidas', async () => {
+    const { service } = createService();
+
+    await expect(service.orders(user)).resolves.toEqual({ items: [] });
+  });
+
+  it('rechaza usuarios sin exactamente una sucursal asignada', async () => {
+    const { service } = createService({ assignments: [] });
+
+    await expect(service.orders(user)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('cambia el estado de una comanda recibida a En preparacion', async () => {
+    const { service, db, kitchen } = createService();
+
+    const result = await service.take(user, ORDER_ID);
+
+    expect(result).toEqual({
+      id: ORDER_ID,
+      status: 'En preparacion',
+    });
+
+    expect(db.order.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: ORDER_ID,
+        branchId: BRANCH_ID,
+        status: OrderStatus.RECEIVED,
+      },
+      data: {
+        status: OrderStatus.IN_PREPARATION,
+      },
+    });
+
+    expect(kitchen.orderUpdated).toHaveBeenCalled();
+  });
+
+  it('devuelve 404 cuando la comanda no existe en la sucursal', async () => {
+    const { service, db } = createService({ existingOrder: null });
+
+    await expect(service.take(user, ORDER_ID)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    expect(db.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('devuelve 409 cuando la comanda ya no esta disponible', async () => {
+    const { service } = createService({
+      updateMany: () => Promise.resolve({ count: 0 }),
+    });
+
+    await expect(service.take(user, ORDER_ID)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('permite que solo una solicitud tome una comanda simultaneamente', async () => {
+    let status = OrderStatus.RECEIVED;
+
+    const { service } = createService({
+      updateMany: async () => {
+        if (status !== OrderStatus.RECEIVED) {
+          return { count: 0 };
+        }
+
+        status = OrderStatus.IN_PREPARATION;
+        return { count: 1 };
+      },
+    });
+
+    const results = await Promise.allSettled([
+      service.take(user, ORDER_ID),
+      service.take(user, ORDER_ID),
+    ]);
+
+    const successful = results.filter(
+      (result) => result.status === 'fulfilled',
+    );
+
+    const rejected = results.filter(
+      (result) => result.status === 'rejected',
+    );
+
+    expect(successful).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    if (rejected[0].status === 'rejected') {
+      expect(rejected[0].reason).toBeInstanceOf(ConflictException);
+    }
+
+    expect(status).toBe(OrderStatus.IN_PREPARATION);
+  });
+});
+
+describe('KitchenService - H8', () => {
+  const kitchenUser = {
+    id: 'kitchen-1',
     role: UserRole.COCINA,
-  } as any;
+  } as User;
 
   const orderId = '11111111-1111-4111-8111-111111111111';
   const itemId = '22222222-2222-4222-8222-222222222222';
@@ -39,13 +231,14 @@ describe('KitchenService - H8', () => {
       $transaction: vi.fn(async (callback) => callback(tx)),
       staffBranch: {
         findUnique: vi.fn().mockResolvedValue({
-          userId: user.id,
+          userId: kitchenUser.id,
           branchId,
         }),
         findMany: vi.fn(),
       },
       order: {
         findMany: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue({ branchId }),
       },
     };
 
@@ -60,7 +253,7 @@ describe('KitchenService - H8', () => {
     service = new KitchenService(db, kitchen, notifications);
   });
 
-  it('marca un platillo en preparación como listo', async () => {
+  it('marca un platillo en preparacion como listo', async () => {
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
       branchId,
@@ -74,7 +267,7 @@ describe('KitchenService - H8', () => {
     });
 
     const result = await service.markItemReady(
-      user,
+      kitchenUser,
       orderId,
       itemId,
       'Listo',
@@ -94,7 +287,7 @@ describe('KitchenService - H8', () => {
     expect(kitchen.orderUpdated).toHaveBeenCalled();
   });
 
-  it('rechaza marcar un platillo si la comanda no está en preparación', async () => {
+  it('rechaza marcar un platillo si la comanda no esta en preparacion', async () => {
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
       branchId,
@@ -103,13 +296,13 @@ describe('KitchenService - H8', () => {
     });
 
     await expect(
-      service.markItemReady(user, orderId, itemId, 'Listo'),
+      service.markItemReady(kitchenUser, orderId, itemId, 'Listo'),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(tx.orderItem.update).not.toHaveBeenCalled();
   });
 
-  it('rechaza la operación si el usuario no pertenece a la sucursal', async () => {
+  it('rechaza la operacion si el usuario no pertenece a la sucursal', async () => {
     db.staffBranch.findUnique.mockResolvedValue(null);
 
     tx.order.findUnique.mockResolvedValue({
@@ -120,13 +313,13 @@ describe('KitchenService - H8', () => {
     });
 
     await expect(
-      service.markItemReady(user, orderId, itemId, 'Listo'),
+      service.markItemReady(kitchenUser, orderId, itemId, 'Listo'),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(tx.orderItem.update).not.toHaveBeenCalled();
   });
 
-  it('marca la comanda lista cuando todos sus platillos están listos', async () => {
+  it('marca la comanda lista cuando todos sus platillos estan listos', async () => {
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
       branchId,
@@ -138,7 +331,7 @@ describe('KitchenService - H8', () => {
     tx.order.update.mockResolvedValue({});
 
     const result = await service.markOrderReady(
-      user,
+      kitchenUser,
       orderId,
       'Listo',
     );
@@ -176,7 +369,7 @@ describe('KitchenService - H8', () => {
     });
 
     await expect(
-      service.markOrderReady(user, orderId, 'Listo'),
+      service.markOrderReady(kitchenUser, orderId, 'Listo'),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(tx.order.update).not.toHaveBeenCalled();
@@ -193,7 +386,7 @@ describe('KitchenService - H8', () => {
     });
 
     await expect(
-      service.markOrderReady(user, orderId, 'Listo'),
+      service.markOrderReady(kitchenUser, orderId, 'Listo'),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(tx.order.update).not.toHaveBeenCalled();
@@ -203,12 +396,9 @@ describe('KitchenService - H8', () => {
     const waiter = {
       id: 'waiter-1',
       role: UserRole.MESERO,
-    } as any;
+    } as User;
 
-    db.staffBranch.findMany.mockResolvedValue([
-      { branchId },
-    ]);
-
+    db.staffBranch.findMany.mockResolvedValue([{ branchId }]);
     db.order.findMany.mockResolvedValue([
       { id: orderId, status: 'READY' },
     ]);
@@ -228,11 +418,11 @@ describe('KitchenService - H8', () => {
     expect(result).toHaveLength(1);
   });
 
-  it('rechaza entregar una comanda que no está lista', async () => {
+  it('rechaza entregar una comanda que no esta lista', async () => {
     const waiter = {
       id: 'waiter-1',
       role: UserRole.MESERO,
-    } as any;
+    } as User;
 
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
@@ -252,7 +442,7 @@ describe('KitchenService - H8', () => {
     const waiter = {
       id: 'waiter-2',
       role: UserRole.MESERO,
-    } as any;
+    } as User;
 
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
@@ -272,7 +462,7 @@ describe('KitchenService - H8', () => {
     const waiter = {
       id: 'waiter-1',
       role: UserRole.MESERO,
-    } as any;
+    } as User;
 
     tx.order.findUnique.mockResolvedValue({
       id: orderId,
@@ -294,9 +484,11 @@ describe('KitchenService - H8', () => {
       id: orderId,
       status: 'Entregado',
     });
+
+    expect(kitchen.orderUpdated).toHaveBeenCalled();
   });
 
-  it('consulta las comandas en preparación de las sucursales asignadas', async () => {
+  it('consulta las comandas en preparacion de las sucursales asignadas', async () => {
     const orders = [
       {
         id: orderId,
@@ -304,13 +496,10 @@ describe('KitchenService - H8', () => {
       },
     ];
 
-    db.staffBranch.findMany.mockResolvedValue([
-      { branchId },
-    ]);
-
+    db.staffBranch.findMany.mockResolvedValue([{ branchId }]);
     db.order.findMany.mockResolvedValue(orders);
 
-    const result = await service.getOrdersInPreparation(user);
+    const result = await service.getOrdersInPreparation(kitchenUser);
 
     expect(db.order.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -328,7 +517,7 @@ describe('KitchenService - H8', () => {
     const waiter = {
       id: 'waiter-1',
       role: UserRole.MESERO,
-    } as any;
+    } as User;
 
     await expect(
       service.getOrdersInPreparation(waiter),
@@ -338,10 +527,10 @@ describe('KitchenService - H8', () => {
     expect(db.order.findMany).not.toHaveBeenCalled();
   });
 
-  it('devuelve una lista vacía si cocina no tiene sucursales asignadas', async () => {
+  it('devuelve una lista vacia si cocina no tiene sucursales asignadas', async () => {
     db.staffBranch.findMany.mockResolvedValue([]);
 
-    const result = await service.getOrdersInPreparation(user);
+    const result = await service.getOrdersInPreparation(kitchenUser);
 
     expect(result).toEqual([]);
     expect(db.order.findMany).not.toHaveBeenCalled();
