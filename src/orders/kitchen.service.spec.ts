@@ -536,3 +536,210 @@ describe('KitchenService - H8', () => {
     expect(db.order.findMany).not.toHaveBeenCalled();
   });
 });
+
+describe('KitchenService - H9', () => {
+  const kitchenUser = {
+    id: USER_ID,
+    role: UserRole.COCINA,
+  } as User;
+
+  const waiterUser = {
+    id: '55555555-5555-4555-8555-555555555555',
+    role: UserRole.MESERO,
+  } as User;
+
+  const dishId = '66666666-6666-4666-8666-666666666666';
+
+  let service: KitchenService;
+  let db: any;
+  let tx: any;
+  let notifications: any;
+
+  beforeEach(() => {
+    tx = {
+      branchDish: {
+        findUnique: vi.fn().mockResolvedValue({
+          branchId: BRANCH_ID,
+          dishId,
+          dish: {
+            name: 'Hamburguesa clasica',
+          },
+        }),
+        update: vi.fn().mockResolvedValue({
+          stockStatus: 'OUT_OF_STOCK',
+        }),
+      },
+      order: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+
+    db = {
+      staffBranch: {
+        findUnique: vi.fn().mockResolvedValue({
+          userId: USER_ID,
+          branchId: BRANCH_ID,
+        }),
+      },
+      $transaction: vi.fn(async (callback) => callback(tx)),
+    };
+
+    notifications = {
+      send: vi.fn().mockResolvedValue([]),
+    };
+
+    service = new KitchenService(
+      db,
+      {} as any,
+      notifications,
+    );
+  });
+
+  it('marca un platillo como agotado en la sucursal seleccionada', async () => {
+    const result = await service.markOutOfStock(
+      kitchenUser,
+      dishId,
+      BRANCH_ID,
+    );
+
+    expect(tx.branchDish.update).toHaveBeenCalledWith({
+      where: {
+        branchId_dishId: {
+          branchId: BRANCH_ID,
+          dishId,
+        },
+      },
+      data: {
+        stockStatus: 'OUT_OF_STOCK',
+      },
+    });
+
+    expect(result).toEqual({
+      dishId,
+      branchId: BRANCH_ID,
+      stockStatus: 'Agotado',
+    });
+
+    expect(db.$transaction).toHaveBeenCalled();
+  });
+
+  it('rechaza marcar agotado si el usuario no pertenece a cocina', async () => {
+    await expect(
+      service.markOutOfStock(waiterUser, dishId, BRANCH_ID),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(db.staffBranch.findUnique).not.toHaveBeenCalled();
+    expect(tx.branchDish.update).not.toHaveBeenCalled();
+  });
+
+  it('rechaza la operacion si el usuario no tiene acceso a la sucursal', async () => {
+    db.staffBranch.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.markOutOfStock(kitchenUser, dishId, BRANCH_ID),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(tx.branchDish.update).not.toHaveBeenCalled();
+  });
+
+  it('devuelve 404 si el platillo no esta registrado en la sucursal', async () => {
+    tx.branchDish.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.markOutOfStock(kitchenUser, dishId, BRANCH_ID),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(tx.branchDish.update).not.toHaveBeenCalled();
+    expect(notifications.send).not.toHaveBeenCalled();
+  });
+
+  it('notifica una sola vez a cada mesero con comandas activas afectadas', async () => {
+    tx.order.findMany.mockResolvedValue([
+      {
+        id: ORDER_ID,
+        orderNumber: 'COM-001',
+        account: {
+          waiterId: 'waiter-1',
+        },
+      },
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        orderNumber: 'COM-002',
+        account: {
+          waiterId: 'waiter-1',
+        },
+      },
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        orderNumber: 'COM-003',
+        account: {
+          waiterId: 'waiter-2',
+        },
+      },
+    ]);
+
+    await service.markOutOfStock(
+      kitchenUser,
+      dishId,
+      BRANCH_ID,
+    );
+
+    expect(tx.order.findMany).toHaveBeenCalledWith({
+      where: {
+        branchId: BRANCH_ID,
+        status: {
+          in: ['RECEIVED', 'IN_PREPARATION', 'READY'],
+        },
+        items: {
+          some: {
+            dishId,
+            status: {
+              not: 'CANCELLED',
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        orderNumber: true,
+        account: {
+          select: {
+            waiterId: true,
+          },
+        },
+      },
+    });
+
+    expect(notifications.send).toHaveBeenCalledTimes(1);
+
+    expect(notifications.send).toHaveBeenCalledWith({
+      recipientIds: ['waiter-1', 'waiter-2'],
+      title: 'Platillo agotado',
+      message:
+        'El platillo Hamburguesa clasica fue marcado como agotado. ' +
+        'Revisa las comandas afectadas: COM-001, COM-002, COM-003.',
+      sourceModule: 'COCINA',
+      referenceType: 'Dish',
+      referenceId: dishId,
+    });
+  });
+
+  it('no envia notificaciones cuando no hay comandas afectadas', async () => {
+    tx.order.findMany.mockResolvedValue([]);
+
+    const result = await service.markOutOfStock(
+      kitchenUser,
+      dishId,
+      BRANCH_ID,
+    );
+
+    expect(notifications.send).not.toHaveBeenCalled();
+
+    expect(result).toEqual({
+      dishId,
+      branchId: BRANCH_ID,
+      stockStatus: 'Agotado',
+    });
+  });
+});

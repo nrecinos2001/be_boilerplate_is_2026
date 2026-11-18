@@ -1,4 +1,3 @@
-
 import {
   ConflictException,
   ForbiddenException,
@@ -7,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import {
+  DishStatus,
   NotificationSource,
   UserRole,
 } from '../generated/prisma/client.js';
@@ -155,6 +155,8 @@ export class KitchenService {
   }
 
   // H8: consulta comandas en preparacion de todas las sucursales asignadas.
+
+  // H8/H9: consulta comandas en preparacion y disponibilidad de platillos por sucursal.
   async getOrdersInPreparation(user: User) {
     if (user.role !== UserRole.COCINA) {
       throw new ForbiddenException(
@@ -186,6 +188,15 @@ export class KitchenService {
             dish: {
               select: {
                 name: true,
+                branchDishes: {
+                  where: {
+                    branchId: { in: branchIds },
+                  },
+                  select: {
+                    branchId: true,
+                    stockStatus: true,
+                  },
+                },
               },
             },
           },
@@ -492,5 +503,119 @@ export class KitchenService {
     );
 
     return result;
+  }
+
+  // H9: marca un platillo como agotado en una sucursal y notifica a los meseros afectados.
+  async markOutOfStock(
+    user: User,
+    dishId: string,
+    branchId: string,
+  ) {
+    if (user.role !== UserRole.COCINA) {
+      throw new ForbiddenException(
+        'Solo el personal de cocina puede realizar esta accion',
+      );
+    }
+
+    await this.checkBranch(user, branchId);
+
+    const result = await this.db.$transaction(async (tx) => {
+      const branchDish = await tx.branchDish.findUnique({
+        where: {
+          branchId_dishId: {
+            branchId,
+            dishId,
+          },
+        },
+        include: {
+          dish: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!branchDish) {
+        throw new NotFoundException(
+          'El platillo no existe o no esta registrado en esta sucursal',
+        );
+      }
+
+      await tx.branchDish.update({
+        where: {
+          branchId_dishId: {
+            branchId,
+            dishId,
+          },
+        },
+        data: {
+          stockStatus: DishStatus.OUT_OF_STOCK,
+        },
+      });
+
+      const affectedOrders = await tx.order.findMany({
+        where: {
+          branchId,
+          status: {
+            in: ['RECEIVED', 'IN_PREPARATION', 'READY'],
+          },
+          items: {
+            some: {
+              dishId,
+              status: {
+                not: 'CANCELLED',
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          orderNumber: true,
+          account: {
+            select: {
+              waiterId: true,
+            },
+          },
+        },
+      });
+
+      const recipientIds = [
+        ...new Set(
+          affectedOrders
+            .map((order) => order.account?.waiterId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+
+      return {
+        dishName: branchDish.dish.name,
+        recipientIds,
+        affectedOrders,
+      };
+    });
+
+    if (result.recipientIds.length > 0) {
+      const orderNumbers = result.affectedOrders
+        .map((order) => order.orderNumber)
+        .join(', ');
+
+      await this.notifications.send({
+        recipientIds: result.recipientIds,
+        title: 'Platillo agotado',
+        message:
+          `El platillo ${result.dishName} fue marcado como agotado. ` +
+          `Revisa las comandas afectadas: ${orderNumbers}.`,
+        sourceModule: NotificationSource.COCINA,
+        referenceType: 'Dish',
+        referenceId: dishId,
+      });
+    }
+
+    return {
+      dishId,
+      branchId,
+      stockStatus: 'Agotado',
+    };
   }
 }

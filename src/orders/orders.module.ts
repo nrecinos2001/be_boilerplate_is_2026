@@ -12,6 +12,7 @@ import { KitchenGateway } from './kitchen.gateway.js';
 import { KitchenController } from './kitchen.controller.js';
 import { KitchenReadyController } from './kitchen-ready.controller.js';
 import { KitchenDeliveryController } from './kitchen-delivery.controller.js';
+import { KitchenOutOfStockController } from './kitchen-out-of-stock.controller.js';
 import { KitchenService } from './kitchen.service.js';
 
 @Module({
@@ -30,6 +31,7 @@ import { KitchenService } from './kitchen.service.js';
     KitchenController,
     KitchenReadyController,
     KitchenDeliveryController,
+    KitchenOutOfStockController,
   ],
   providers: [
     OrdersService,
