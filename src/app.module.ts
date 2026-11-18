@@ -9,6 +9,7 @@ import { UsersModule } from '@Users';
 import { validateEnv } from '@Config';
 import { MenuModule } from './menu/menu.module.js';
 import { OrdersModule } from './orders/orders.module.js';
+import { ReservationsModule } from './reservations/reservations.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ReportsModule } from './reports/reports.module.js';
@@ -27,6 +28,7 @@ import { RolesGuard } from './auth/guards/roles.guard.js';
     AuthModule,
     MenuModule,
     OrdersModule,
+    ReservationsModule,
     InventoryModule,
     NotificationsModule,
     ReportsModule,
