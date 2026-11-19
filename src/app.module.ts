@@ -7,6 +7,14 @@ import { HealthModule } from '@Health';
 import { PrismaModule } from '@Prisma';
 import { UsersModule } from '@Users';
 import { validateEnv } from '@Config';
+import { MenuModule } from './menu/menu.module.js';
+import { OrdersModule } from './orders/orders.module.js';
+import { ReservationsModule } from './reservations/reservations.module.js';
+import { InventoryModule } from './inventory/inventory.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
+import { ReportsModule } from './reports/reports.module.js';
+import { RolesGuard } from './auth/guards/roles.guard.js';
+import { TablesModule } from './tables/tables.module.js';
 
 @Module({
   imports: [
@@ -20,6 +28,13 @@ import { validateEnv } from '@Config';
     HealthModule,
     UsersModule,
     AuthModule,
+    MenuModule,
+    OrdersModule,
+    ReservationsModule,
+    InventoryModule,
+    NotificationsModule,
+    ReportsModule,
+    TablesModule,
   ],
   providers: [
     {
@@ -27,6 +42,10 @@ import { validateEnv } from '@Config';
       provide: APP_GUARD,
       useExisting: JwtAuthGuard,
     },
+    {
+    provide: APP_GUARD,
+    useClass: RolesGuard,
+  },
   ],
 })
 export class AppModule {}
