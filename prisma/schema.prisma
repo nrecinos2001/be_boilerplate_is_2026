@@ -6,18 +6,12 @@
 
 generator client {
   provider = "prisma-client"
-
-  // El cliente se genera dentro de src/.
   output = "../src/generated/prisma"
-
-  // Query compiler en WASM, compatible con Alpine.
   engineType = "client"
-  runtime    = "nodejs"
-
-  // Configuración para ESM y TypeScript NodeNext.
-  moduleFormat           = "esm"
+  runtime = "nodejs"
+  moduleFormat = "esm"
   generatedFileExtension = "ts"
-  importFileExtension    = "js"
+  importFileExtension = "js"
 }
 
 datasource db {
@@ -48,7 +42,6 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  // Rol asignado al usuario.
   role UserRole @default(CLIENTE)
 
   refreshTokens      RefreshToken[]
@@ -62,6 +55,9 @@ model User {
   reservations       Reservation[]
 
 
+  // H20 - Cuenta de puntos del cliente
+  loyaltyAccount LoyaltyAccount?
+
   @@map("users")
 }
 
@@ -71,16 +67,12 @@ model User {
 
 model RefreshToken {
   id String @id @default(uuid()) @db.Uuid
-
-  // Se almacena el hash SHA-256 del token.
   tokenHash String @unique @map("token_hash")
-
   userId String @map("user_id") @db.Uuid
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  expiresAt DateTime  @map("expires_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
   @@map("refresh_tokens")
@@ -107,7 +99,6 @@ model Dish {
   price       Decimal @db.Decimal(10, 2)
   imageUrl    String? @map("image_url") @db.VarChar(500)
 
-  // Categoría del platillo.
   categoryId String   @map("category_id") @db.Uuid
   category   Category @relation(fields: [categoryId], references: [id])
 
@@ -117,7 +108,6 @@ model Dish {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  // Disponibilidad por sucursal.
   branchDishes BranchDish[]
   orderItems   OrderItem[]
 
@@ -177,7 +167,6 @@ model Category {
   id   String @id @default(uuid()) @db.Uuid
   name String @unique @db.VarChar(100)
 
-  // Platillos pertenecientes a la categoría.
   dishes Dish[]
 
   @@map("categories")
@@ -355,14 +344,12 @@ enum MovementType {
   SALIDA
 }
 
-// Catálogo único de insumos para toda la cadena.
 model Supply {
-  id         String        @id @default(cuid())
-  name       String        @unique @db.VarChar(100)
-  // Nombre en minúsculas y sin acentos, para la búsqueda de H15.
-  searchName String        @map("search_name") @db.VarChar(100)
-  unit       UnitOfMeasure
-  createdAt  DateTime      @default(now()) @map("created_at")
+  id String @id @default(cuid())
+  name String @unique @db.VarChar(100)
+  searchName String @map("search_name") @db.VarChar(100)
+  unit UnitOfMeasure
+  createdAt DateTime @default(now()) @map("created_at")
 
   inventories     BranchInventory[]
   inventoryAlerts InventoryAlert[]
@@ -433,35 +420,33 @@ model Receipt {
   @@map("receipts")
 }
 
-// Existencias de cada insumo por sucursal.
 model BranchInventory {
-  id           String   @id @default(cuid())
-  branchId     String   @map("branch_id") @db.Uuid
-  supplyId     String   @map("supply_id")
-  quantity     Decimal  @default(0) @db.Decimal(10, 3)
-  minimumStock Decimal  @map("minimum_stock") @db.Decimal(10, 3)
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id String @id @default(cuid())
+  branchId String @map("branch_id") @db.Uuid
+  supplyId String @map("supply_id")
+  quantity Decimal @default(0) @db.Decimal(10, 3)
+  minimumStock Decimal @map("minimum_stock") @db.Decimal(10, 3)
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  branch    Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  supply    Supply              @relation(fields: [supplyId], references: [id])
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supply Supply @relation(fields: [supplyId], references: [id])
   movements InventoryMovement[]
 
   @@unique([branchId, supplyId])
   @@map("branch_inventories")
 }
 
-// Historial de entradas y salidas. No se edita ni se elimina.
 model InventoryMovement {
-  id                String       @id @default(cuid())
-  branchInventoryId String       @map("branch_inventory_id")
-  type              MovementType
-  quantity          Decimal      @db.Decimal(10, 3)
-  reason            String       @db.VarChar(200)
-  createdById       String       @map("created_by_id") @db.Uuid
-  createdAt         DateTime     @default(now()) @map("created_at")
+  id String @id @default(cuid())
+  branchInventoryId String @map("branch_inventory_id")
+  type MovementType
+  quantity Decimal @db.Decimal(10, 3)
+  reason String @db.VarChar(200)
+  createdById String @map("created_by_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
 
   branchInventory BranchInventory @relation(fields: [branchInventoryId], references: [id])
-  createdBy       User            @relation(fields: [createdById], references: [id])
+  createdBy User @relation(fields: [createdById], references: [id])
 
   @@index([branchInventoryId, createdAt])
   @@map("inventory_movements")
@@ -471,7 +456,6 @@ model InventoryMovement {
 // H25 - NOTIFICACIONES
 // ==========================================
 
-// Módulos que generan avisos en este alcance; también filtra la bandeja (H26).
 enum NotificationSource {
   COCINA
   RESERVAS
@@ -483,18 +467,17 @@ enum NotificationStatus {
   LEIDA
 }
 
-// Las notificaciones no se borran; solo cambian de No leída a Leída.
 model Notification {
-  id            String             @id @default(cuid())
-  recipientId   String             @map("recipient_id") @db.Uuid
-  title         String             @db.VarChar(100)
-  message       String             @db.VarChar(500)
-  sourceModule  NotificationSource @map("source_module")
-  referenceType String?            @map("reference_type") @db.VarChar(50)
-  referenceId   String?            @map("reference_id")
-  status        NotificationStatus @default(NO_LEIDA)
-  createdAt     DateTime           @default(now()) @map("created_at")
-  readAt        DateTime?          @map("read_at")
+  id String @id @default(cuid())
+  recipientId String @map("recipient_id") @db.Uuid
+  title String @db.VarChar(100)
+  message String @db.VarChar(500)
+  sourceModule NotificationSource @map("source_module")
+  referenceType String? @map("reference_type") @db.VarChar(50)
+  referenceId String? @map("reference_id")
+  status NotificationStatus @default(NO_LEIDA)
+  createdAt DateTime @default(now()) @map("created_at")
+  readAt DateTime? @map("read_at")
 
   recipient User @relation(fields: [recipientId], references: [id])
 
@@ -502,23 +485,59 @@ model Notification {
   @@map("notifications")
 }
 
-// H16 - Cada ciclo de escasez conserva una alerta, incluso si se atiende.
+// H16 - ALERTAS DE INVENTARIO
 enum InventoryAlertStatus {
   ACTIVA
   ATENDIDA
 }
 
 model InventoryAlert {
-  id              String               @id @default(cuid())
-  branchId        String               @map("branch_id") @db.Uuid
-  supplyId        String               @map("supply_id")
-  quantityAtAlert Decimal              @map("quantity_at_alert") @db.Decimal(10, 3)
-  status          InventoryAlertStatus @default(ACTIVA)
-  cycleOpen       Boolean              @default(true) @map("cycle_open")
-  createdAt       DateTime             @default(now()) @map("created_at")
-  branch          Branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  supply          Supply               @relation(fields: [supplyId], references: [id])
+  id String @id @default(cuid())
+  branchId String @map("branch_id") @db.Uuid
+  supplyId String @map("supply_id")
+  quantityAtAlert Decimal @map("quantity_at_alert") @db.Decimal(10, 3)
+  status InventoryAlertStatus @default(ACTIVA)
+  cycleOpen Boolean @default(true) @map("cycle_open")
+  createdAt DateTime @default(now()) @map("created_at")
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supply Supply @relation(fields: [supplyId], references: [id])
 
   @@index([branchId, status, createdAt])
   @@map("inventory_alerts")
+}
+
+// ==========================================
+// H20 - ACUMULACION DE PUNTOS
+// ==========================================
+
+enum LoyaltyMovementType {
+  EARNED
+}
+
+model LoyaltyAccount {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  balance Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  movements LoyaltyMovement[]
+
+  @@map("loyalty_accounts")
+}
+
+model LoyaltyMovement {
+  id String @id @default(uuid()) @db.Uuid
+  loyaltyAccountId String @map("loyalty_account_id") @db.Uuid
+  type LoyaltyMovementType
+  points Int
+  paymentReference String @unique @map("payment_reference")
+  description String? @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  loyaltyAccount LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id], onDelete: Cascade)
+
+  @@index([loyaltyAccountId, createdAt])
+  @@map("loyalty_movements")
 }

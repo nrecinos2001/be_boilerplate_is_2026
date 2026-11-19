@@ -1,18 +1,21 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+
 import { AuthModule } from '@Auth';
 import { JwtAuthGuard } from '@Auth/guards';
 import { HealthModule } from '@Health';
 import { PrismaModule } from '@Prisma';
 import { UsersModule } from '@Users';
 import { validateEnv } from '@Config';
+
 import { MenuModule } from './menu/menu.module.js';
 import { OrdersModule } from './orders/orders.module.js';
 import { ReservationsModule } from './reservations/reservations.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ReportsModule } from './reports/reports.module.js';
+import { LoyaltyModule } from './loyalty/loyalty.module.js';
 import { RolesGuard } from './auth/guards/roles.guard.js';
 import { TablesModule } from './tables/tables.module.js';
 
@@ -35,6 +38,7 @@ import { TablesModule } from './tables/tables.module.js';
     NotificationsModule,
     ReportsModule,
     TablesModule,
+    LoyaltyModule,
   ],
   providers: [
     {
@@ -43,9 +47,9 @@ import { TablesModule } from './tables/tables.module.js';
       useExisting: JwtAuthGuard,
     },
     {
-    provide: APP_GUARD,
-    useClass: RolesGuard,
-  },
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
   ],
 })
 export class AppModule {}
