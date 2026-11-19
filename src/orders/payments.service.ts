@@ -17,6 +17,7 @@ import type { User } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/services/prisma.service.js';
 import { KitchenGateway } from './kitchen.gateway.js';
 import { CreatePaymentDto } from './payments.dto.js';
+import { CreateTakeawayPaymentDto } from './payments.dto.js';
 import { LoyaltyService } from '../loyalty/loyalty.service.js';
 
 @Injectable()
@@ -418,6 +419,209 @@ export class PaymentsService {
       change: result.change,
     };
   }
+
+  // H19: pago en línea de pedidos para llevar realizado por clientes.
+  async payTakeawayOrder(
+    user: User,
+    orderId: string,
+    input: CreateTakeawayPaymentDto,
+  ) {
+    if (user.role !== UserRole.CLIENTE) {
+      throw new ForbiddenException(
+        'Solo un cliente puede pagar su pedido',
+      );
+    }
+
+    await this.delay(2000);
+
+    try {
+      const result = await this.db.$transaction(async (tx) => {
+        const order = await tx.order.findUnique({
+          where: { id: orderId },
+          include: {
+            items: {
+              include: {
+                dish: {
+                  select: { name: true },
+                },
+              },
+            },
+          },
+        });
+
+        if (!order) {
+          throw new NotFoundException('Pedido inexistente');
+        }
+
+        if (order.customerId !== user.id || order.accountId !== null) {
+          throw new ForbiddenException(
+            'No tiene permiso para consultar este pedido',
+          );
+        }
+
+        if (order.status !== 'PENDING_PAYMENT') {
+          throw new ConflictException(
+            'El pedido no está pendiente de pago',
+          );
+        }
+
+        if (order.items.length === 0) {
+          throw new ConflictException(
+            'No existen productos para cobrar',
+          );
+        }
+
+        const items = order.items.map((item) => ({
+          productName: item.dish.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice.toNumber(),
+          subtotal: item.subtotal.toNumber(),
+        }));
+
+        const subtotal = items.reduce(
+          (sum, item) => sum.plus(item.subtotal),
+          new Prisma.Decimal(0),
+        );
+
+        const amounts = this.calculateAmounts(subtotal);
+
+        const paymentStatus =
+          input.cardLast4 === '0002'
+            ? PaymentStatus.REJECTED
+            : PaymentStatus.APPROVED;
+
+        const payment = await tx.payment.create({
+          data: {
+            branchId: order.branchId,
+            orderId: order.id,
+            userId: user.id,
+            method: PaymentMethod.CARD,
+            status: paymentStatus,
+            amount: amounts.total,
+            cardLast4: input.cardLast4,
+          },
+        });
+
+        if (paymentStatus === PaymentStatus.REJECTED) {
+          return {
+            rejected: true as const,
+            paymentId: payment.id,
+          };
+        }
+
+        const branchUpdate = await tx.branch.update({
+          where: { id: order.branchId },
+          data: {
+            receiptCounter: { increment: 1 },
+          },
+          select: {
+            receiptCounter: true,
+            code: true,
+            name: true,
+          },
+        });
+
+        const receipt = await tx.receipt.create({
+          data: {
+            branchId: order.branchId,
+            paymentId: payment.id,
+            orderId: order.id,
+            receiptNumber: branchUpdate.receiptCounter,
+            subtotal: amounts.subtotal,
+            discount: amounts.discount,
+            tax: amounts.tax,
+            total: amounts.total,
+            paymentMethod: PaymentMethod.CARD,
+            items: items as Prisma.InputJsonValue,
+          },
+        });
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'RECEIVED',
+          },
+        });
+
+        return {
+          rejected: false as const,
+          paymentId: payment.id,
+          branchId: order.branchId,
+          customerId: order.customerId,
+          receipt: {
+            id: receipt.id,
+            number: receipt.receiptNumber,
+            branch: {
+              name: branchUpdate.name,
+              code: branchUpdate.code,
+            },
+            issuedAt: receipt.issuedAt,
+            subtotal: receipt.subtotal,
+            discount: receipt.discount,
+            tax: receipt.tax,
+            total: receipt.total,
+            paymentMethod: receipt.paymentMethod,
+            items,
+            order: {
+              id: order.id,
+              orderNumber: order.orderNumber,
+            },
+          },
+          orderNotification: {
+            id: order.id,
+            orderNumber: order.orderNumber,
+            status: 'RECEIVED',
+            items: order.items.map((item) => ({
+              dishId: item.dishId,
+              name: item.dish.name,
+              quantity: item.quantity,
+              notes: item.notes,
+            })),
+          },
+        };
+      });
+
+      if (result.rejected) {
+        return {
+          paymentId: result.paymentId,
+          status: 'REJECTED',
+          message: 'Pago rechazado. Intente con otro método de pago',
+        };
+      }
+
+      // Integración con el servicio interno de fidelidad.
+      await this.loyalty.processApprovedPayment(
+        result.customerId,
+        result.paymentId,
+        result.receipt.total.toNumber(),
+      );
+
+      // Cocina recibe el pedido después de confirmar el pago.
+      this.kitchen.notify(
+        result.branchId,
+        result.orderNotification,
+      );
+
+      return {
+        paymentId: result.paymentId,
+        status: 'APPROVED',
+        message: 'Pago aprobado',
+        receipt: result.receipt,
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Este pedido ya tiene un pago aprobado',
+        );
+      }
+
+      throw error;
+    }
+  }
+
   // H18: consultar un comprobante generado.
   async getReceipt(user: User, receiptId: string) {
     if (user.role !== UserRole.MESERO) {

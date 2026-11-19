@@ -10,6 +10,7 @@ import {
 
 import { PaymentMethod } from '../generated/prisma/client.js';
 
+// H18: pagos realizados por meseros.
 export class CreatePaymentDto {
   @IsOptional()
   @IsUUID()
@@ -31,4 +32,11 @@ export class CreatePaymentDto {
   @IsString()
   @Matches(/^(4242|0002)$/)
   cardLast4?: string;
+}
+
+// H19: pago en línea realizado por clientes.
+export class CreateTakeawayPaymentDto {
+  @IsString()
+  @Matches(/^(4242|0002)$/)
+  cardLast4!: string;
 }
