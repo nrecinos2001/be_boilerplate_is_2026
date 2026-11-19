@@ -162,7 +162,7 @@ describe('KitchenService - H7', () => {
   });
 
   it('permite que solo una solicitud tome una comanda simultaneamente', async () => {
-    let status = OrderStatus.RECEIVED;
+    let status: OrderStatus = OrderStatus.RECEIVED;
 
     const { service } = createService({
       updateMany: async () => {
