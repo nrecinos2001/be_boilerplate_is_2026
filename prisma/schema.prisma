@@ -56,9 +56,11 @@ model User {
   accountsAsCustomer Account[]           @relation("AccountCustomer")
   accountsAsWaiter   Account[]           @relation("AccountWaiter")
   takeawayOrders     Order[]             @relation("TakeawayCustomer")
+  paymentsProcessed Payment[]            @relation("PaymentProcessedBy")
   inventoryMovements InventoryMovement[]
   notifications      Notification[]
   reservations       Reservation[]
+
 
   @@map("users")
 }
@@ -134,6 +136,7 @@ model Branch {
   openingTime     String  @default("07:00") @map("opening_time") @db.VarChar(5)
   closingTime     String  @default("22:00") @map("closing_time") @db.VarChar(5)
   takeawayCounter Int     @default(0) @map("takeaway_counter")
+  receiptCounter Int @default(0) @map("receipt_counter")
 
   dishes          BranchDish[]
   tables          RestaurantTable[]
@@ -143,6 +146,8 @@ model Branch {
   inventories     BranchInventory[]
   inventoryAlerts InventoryAlert[]
   reservations    Reservation[]
+  payments        Payment[]
+  receipts        Receipt[]
 
   @@map("branches")
 }
@@ -192,6 +197,16 @@ enum AccountStatus {
   OPEN
   PAID
   VOID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+}
+
+enum PaymentStatus {
+  APPROVED
+  REJECTED
 }
 
 enum OrderStatus {
@@ -278,6 +293,8 @@ model Account {
   customer   User?           @relation("AccountCustomer", fields: [customerId], references: [id])
   waiter     User            @relation("AccountWaiter", fields: [waiterId], references: [id])
   orders     Order[]
+  payments Payment[]
+  receipt  Receipt?
 
   @@index([tableId, status])
   @@map("accounts")
@@ -297,6 +314,8 @@ model Order {
   customer    User?       @relation("TakeawayCustomer", fields: [customerId], references: [id])
   branch      Branch      @relation(fields: [branchId], references: [id])
   items       OrderItem[]
+  payments    Payment[]
+  receipt     Receipt?
 
   @@index([branchId, status, createdAt])
   @@map("orders")
@@ -349,6 +368,69 @@ model Supply {
   inventoryAlerts InventoryAlert[]
 
   @@map("supplies")
+}
+// ==========================================
+// H18 - PAGOS Y COMPROBANTES
+// ==========================================
+
+model Payment {
+  id             String        @id @default(uuid()) @db.Uuid
+  branchId       String        @map("branch_id") @db.Uuid
+  accountId      String?       @map("account_id") @db.Uuid
+  orderId        String?       @map("order_id") @db.Uuid
+  userId         String        @map("user_id") @db.Uuid
+
+  method         PaymentMethod
+  status         PaymentStatus @default(APPROVED)
+
+  amount         Decimal       @db.Decimal(10, 2)
+  amountReceived Decimal?      @map("amount_received") @db.Decimal(10, 2)
+  change         Decimal       @default(0) @db.Decimal(10, 2)
+
+  cardLast4      String?       @map("card_last4") @db.VarChar(4)
+
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  branch         Branch        @relation(fields: [branchId], references: [id])
+  account        Account?      @relation(fields: [accountId], references: [id])
+  order          Order?        @relation(fields: [orderId], references: [id])
+  user           User          @relation("PaymentProcessedBy", fields: [userId], references: [id])
+
+  receipt        Receipt?
+
+  @@index([accountId, status])
+  @@index([orderId, status])
+  @@index([branchId, createdAt])
+  @@map("payments")
+}
+
+model Receipt {
+  id            String   @id @default(uuid()) @db.Uuid
+  branchId      String   @map("branch_id") @db.Uuid
+  paymentId     String   @unique @map("payment_id") @db.Uuid
+
+  accountId     String?  @unique @map("account_id") @db.Uuid
+  orderId       String?  @unique @map("order_id") @db.Uuid
+
+  receiptNumber Int      @map("receipt_number")
+  issuedAt      DateTime @default(now()) @map("issued_at")
+
+  subtotal      Decimal  @db.Decimal(10, 2)
+  discount      Decimal  @default(0) @db.Decimal(10, 2)
+  tax           Decimal  @db.Decimal(10, 2)
+  total         Decimal  @db.Decimal(10, 2)
+
+  paymentMethod PaymentMethod @map("payment_method")
+
+  items         Json
+
+  branch        Branch  @relation(fields: [branchId], references: [id])
+  payment       Payment @relation(fields: [paymentId], references: [id])
+  account       Account? @relation(fields: [accountId], references: [id])
+  order         Order?   @relation(fields: [orderId], references: [id])
+
+  @@unique([branchId, receiptNumber])
+  @@map("receipts")
 }
 
 // Existencias de cada insumo por sucursal.
