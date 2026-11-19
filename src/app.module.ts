@@ -14,6 +14,8 @@ import { InventoryModule } from './inventory/inventory.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { RolesGuard } from './auth/guards/roles.guard.js';
+import { TablesModule } from './tables/tables.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -32,6 +34,7 @@ import { RolesGuard } from './auth/guards/roles.guard.js';
     InventoryModule,
     NotificationsModule,
     ReportsModule,
+    TablesModule,
   ],
   providers: [
     {
