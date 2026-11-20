@@ -10,7 +10,6 @@ const DEMO_PASSWORD = 'Demo1234!';
 const GERENTE_EMAIL = 'gerente@example.com';
 const MESERO_EMAIL = 'mesero@example.com';
 const COCINA_EMAIL = 'cocina@example.com';
-const GERENTE_GENERAL_EMAIL = 'gerentegeneral@example.com';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL,
@@ -281,28 +280,8 @@ async function main() {
   }
 
   // ==========================================
-  // H29 - GERENTE GENERAL Y PEDIDOS DE PRUEBA
-  // El gerente general no tiene sucursal asignada: ve todas.
+  // H29 - PEDIDOS DE PRUEBA PARA HORARIOS PICO
   // ==========================================
-
-  const gerenteGeneralPassword = process.env.SEED_GERENTE_GENERAL_PASSWORD;
-
-  if (!gerenteGeneralPassword || gerenteGeneralPassword.length < 8) {
-    console.warn(
-      'SEED_GERENTE_GENERAL_PASSWORD no está configurada (mínimo 8 caracteres); no se creó el gerente general.',
-    );
-  } else {
-    const gerenteGeneral = await prisma.user.upsert({
-      where: { email: GERENTE_GENERAL_EMAIL },
-      update: { role: UserRole.GERENTE_GENERAL },
-      create: {
-        email: GERENTE_GENERAL_EMAIL,
-        passwordHash: await bcrypt.hash(gerenteGeneralPassword, 12),
-        role: UserRole.GERENTE_GENERAL,
-      },
-    });
-    console.log(`Gerente general listo: ${gerenteGeneral.email}`);
-  }
 
   // Pedidos ya entregados en los últimos días, a distintas horas
   // (UTC-6), más pedidos cancelados y pendientes de pago que el

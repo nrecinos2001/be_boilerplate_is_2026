@@ -27,7 +27,6 @@ enum UserRole {
   MESERO
   COCINA
   CLIENTE
-  GERENTE_GENERAL
 }
 
 // ==========================================
