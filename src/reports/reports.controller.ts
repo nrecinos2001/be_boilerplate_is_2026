@@ -5,9 +5,10 @@ import { PeakHoursQueryDto } from './dto.js';
 import { ReportsErrorFilter } from './reports-error.filter.js';
 import { ReportsService } from './reports.service.js';
 
-// Épica 10: solo el Gerente general consulta los reportes.
+// Épica 10: los reportes los consulta el Gerente (decisión del equipo:
+// no se usa un rol Gerente general aparte).
 @Controller()
-@Roles(UserRole.GERENTE_GENERAL)
+@Roles(UserRole.GERENTE)
 @UseFilters(ReportsErrorFilter)
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
