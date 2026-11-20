@@ -557,6 +557,117 @@ async function main() {
     }
   }
 
+  // ==========================================
+  // H30 - TERCERA SUCURSAL, VENTAS BAJAS Y RESEÑAS
+  // Al menos 3 sucursales con ventas de distinto monto, para que una
+  // quede marcada como "Requiere atención", y reseñas del cliente de
+  // prueba sobre sus compras (una por compra, calificación de 1 a 5).
+  // ==========================================
+
+  const santaTecla = await prisma.branch.upsert({
+    where: { name: 'Santa Tecla' },
+    update: {},
+    create: { name: 'Santa Tecla', code: 'ST' },
+  });
+
+  const ventasSantaTecla: [number, number][] = [
+    // [días atrás, subtotal]
+    [2, 8.5],
+    [4, 6.25],
+  ];
+
+  for (const [i, [diasAtras, monto]] of ventasSantaTecla.entries()) {
+    const n = String(i + 1).padStart(12, '0');
+    const receiptId = `30300000-0000-4000-8000-${n}`;
+    if (await prisma.receipt.findUnique({ where: { id: receiptId } })) continue;
+
+    const subtotal = new Prisma.Decimal(monto);
+    const tax = subtotal.mul(0.13).toDecimalPlaces(2);
+    const total = subtotal.plus(tax).toDecimalPlaces(2);
+    const fecha = enHoraLocal(diasAtras, 12, i * 7);
+
+    await prisma.$transaction(async (tx) => {
+      const { receiptCounter } = await tx.branch.update({
+        where: { id: santaTecla.id },
+        data: { receiptCounter: { increment: 1 } },
+        select: { receiptCounter: true },
+      });
+      const order = await tx.order.create({
+        data: {
+          id: `30100000-0000-4000-8000-${n}`,
+          branchId: santaTecla.id,
+          status: OrderStatus.DELIVERED,
+          total,
+          createdAt: fecha,
+        },
+      });
+      const payment = await tx.payment.create({
+        data: {
+          id: `30200000-0000-4000-8000-${n}`,
+          branchId: santaTecla.id,
+          orderId: order.id,
+          userId: mesero.id,
+          method: PaymentMethod.CARD,
+          status: PaymentStatus.APPROVED,
+          amount: total,
+          cardLast4: '4242',
+          createdAt: fecha,
+        },
+      });
+      await tx.receipt.create({
+        data: {
+          id: receiptId,
+          branchId: santaTecla.id,
+          paymentId: payment.id,
+          orderId: order.id,
+          receiptNumber: receiptCounter,
+          issuedAt: fecha,
+          subtotal,
+          discount: 0,
+          tax,
+          total,
+          paymentMethod: PaymentMethod.CARD,
+          items: [
+            { productName: 'Consumo de prueba', quantity: 1, unitPrice: monto, subtotal: monto },
+          ],
+        },
+      });
+    });
+  }
+
+  // Reseñas sobre compras pagadas (pedidos para llevar de H27 y H30).
+  const resenas: [string, number, string][] = [
+    // [pedido reseñado, calificación, comentario]
+    ['27200000-0000-4000-8000-000000000001', 4, 'Buena atención.'],
+    ['27200000-0000-4000-8000-000000000002', 5, 'Todo excelente.'],
+    ['27200000-0000-4000-8000-000000000005', 5, 'Muy rápido.'],
+    ['27200000-0000-4000-8000-000000000006', 4, 'Rico, volvería.'],
+    ['27200000-0000-4000-8000-000000000007', 3, 'La comida llegó fría.'],
+    ['30100000-0000-4000-8000-000000000001', 2, 'Tardaron mucho.'],
+  ];
+
+  for (const [i, [orderId, rating, comment]] of resenas.entries()) {
+    const id = `30400000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`;
+    const pedido = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { branchId: true, createdAt: true },
+    });
+    if (!pedido) continue;
+    await prisma.review.upsert({
+      where: { id },
+      update: {},
+      create: {
+        id,
+        userId: demo.id,
+        orderId,
+        branchId: pedido.branchId,
+        rating,
+        comment,
+        createdAt: new Date(pedido.createdAt.getTime() + 60 * 60 * 1000),
+      },
+    });
+  }
+
   console.log(
     `Mesero listo: ${mesero.email}; sucursal asignada: ${assignedBranch.name}`,
   );

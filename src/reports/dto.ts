@@ -36,3 +36,14 @@ export class SalesQueryDto {
 // Parámetros del reporte de platillos más vendidos (H28): mismos filtros
 // que H27 (período y sucursal opcional).
 export class TopDishesQueryDto extends SalesQueryDto {}
+
+// Parámetros de la comparación de sucursales (H30): solo el período.
+export class BranchComparisonQueryDto {
+  @IsOptional()
+  @IsString({ message: 'from debe ser una fecha aaaa-mm-dd' })
+  from?: string;
+
+  @IsOptional()
+  @IsString({ message: 'to debe ser una fecha aaaa-mm-dd' })
+  to?: string;
+}
