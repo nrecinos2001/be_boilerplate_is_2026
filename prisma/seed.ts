@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { NotificationSource, NotificationStatus, OrderStatus, PrismaClient, UnitOfMeasure, UserRole } from '../src/generated/prisma/client.js';
+import { NotificationSource, NotificationStatus, OrderStatus, PaymentMethod, PaymentStatus, Prisma, PrismaClient, UnitOfMeasure, UserRole } from '../src/generated/prisma/client.js';
 
 const DEMO_EMAIL = 'demo@example.com';
 const DEMO_PASSWORD = 'Demo1234!';
@@ -328,6 +328,83 @@ async function main() {
         total: 12.5,
         createdAt: enHoraLocal(diasAtras, hora, minuto),
       },
+    });
+  }
+
+  // ==========================================
+  // H27 - COMPROBANTES DE PRUEBA PARA EL REPORTE DE VENTAS
+  // Pedidos para llevar pagados con tarjeta, con su pago aprobado y su
+  // comprobante en cada sucursal, con el mismo cálculo de H18 (IVA 13 %). El correlativo de la sucursal avanza
+  // igual que en un cobro real, para no repetir números.
+  // ==========================================
+
+  const ventasPrueba: [number, number, number][] = [
+    // [sucursal (índice), días atrás, subtotal]
+    [0, 1, 18.5], [0, 2, 32], [0, 3, 12.75], [0, 4, 45.2],
+    [1, 1, 22], [1, 1, 15.5], [1, 2, 60], [1, 3, 27.3], [1, 5, 38.9], [1, 6, 9.75],
+  ];
+  const sucursalesVenta = [
+    branches.find((b) => b.id !== assignedBranch.id) ?? assignedBranch,
+    assignedBranch,
+  ];
+
+  for (const [i, [indice, diasAtras, monto]] of ventasPrueba.entries()) {
+    const receiptId = `27000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`;
+    const existe = await prisma.receipt.findUnique({ where: { id: receiptId } });
+    if (existe) continue;
+
+    const sucursal = sucursalesVenta[indice];
+    const subtotal = new Prisma.Decimal(monto);
+    const tax = subtotal.mul(0.13).toDecimalPlaces(2);
+    const total = subtotal.plus(tax).toDecimalPlaces(2);
+    const fecha = enHoraLocal(diasAtras, 13, i * 5);
+
+    await prisma.$transaction(async (tx) => {
+      const { receiptCounter } = await tx.branch.update({
+        where: { id: sucursal.id },
+        data: { receiptCounter: { increment: 1 } },
+        select: { receiptCounter: true },
+      });
+      const order = await tx.order.create({
+        data: {
+          id: `27200000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+          branchId: sucursal.id,
+          status: OrderStatus.DELIVERED,
+          total,
+          createdAt: fecha,
+        },
+      });
+      const payment = await tx.payment.create({
+        data: {
+          id: `27100000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+          branchId: sucursal.id,
+          orderId: order.id,
+          userId: mesero.id,
+          method: PaymentMethod.CARD,
+          status: PaymentStatus.APPROVED,
+          amount: total,
+          cardLast4: '4242',
+          createdAt: fecha,
+        },
+      });
+      await tx.receipt.create({
+        data: {
+          id: receiptId,
+          branchId: sucursal.id,
+          paymentId: payment.id,
+          orderId: order.id,
+          receiptNumber: receiptCounter,
+          issuedAt: fecha,
+          subtotal,
+          discount: 0,
+          tax,
+          total,
+          paymentMethod: PaymentMethod.CARD,
+          items: [
+            { productName: 'Consumo de prueba', quantity: 1, unitPrice: monto, subtotal: monto },
+          ],
+        },
+      });
     });
   }
 
