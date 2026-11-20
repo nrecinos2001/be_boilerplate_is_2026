@@ -258,7 +258,7 @@ describe('LoyaltyService H21', () => {
   });
 
   it('libera un canje vencido antes de volver a calcular saldo disponible', async () => {
-    const { repository, service, tx } = setup();
+    const { repository, service, tx } = setup({ reserved: { available: 0 } });
     repository.lockLoyaltyAccount
       .mockResolvedValueOnce({
         id: ACCOUNT_ID,
