@@ -32,3 +32,7 @@ export class SalesQueryDto {
   @IsString({ message: 'to debe ser una fecha aaaa-mm-dd' })
   to?: string;
 }
+
+// Parámetros del reporte de platillos más vendidos (H28): mismos filtros
+// que H27 (período y sucursal opcional).
+export class TopDishesQueryDto extends SalesQueryDto {}
