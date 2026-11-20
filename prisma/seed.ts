@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { NotificationSource, NotificationStatus, OrderStatus, PaymentMethod, PaymentStatus, Prisma, PrismaClient, UnitOfMeasure, UserRole } from '../src/generated/prisma/client.js';
+import { AccountStatus, NotificationSource, NotificationStatus, OrderStatus, PaymentMethod, PaymentStatus, Prisma, PrismaClient, UnitOfMeasure, UserRole } from '../src/generated/prisma/client.js';
 
 const DEMO_EMAIL = 'demo@example.com';
 const DEMO_PASSWORD = 'Demo1234!';
@@ -406,6 +406,155 @@ async function main() {
         },
       });
     });
+  }
+
+  // ==========================================
+  // H28 - VENTAS CON PLATILLOS PARA EL RANKING
+  // Usa los platillos activos del menú (H1): pedidos para llevar pagados
+  // y una cuenta de mesa pagada con un pedido cancelado, que el reporte
+  // no debe contar. Si el menú está vacío, no se crean.
+  // ==========================================
+
+  const platillos = await prisma.dish.findMany({
+    where: { status: 'ACTIVE' },
+    orderBy: { name: 'asc' },
+    take: 12,
+  });
+
+  if (platillos.length === 0) {
+    console.warn('No hay platillos activos; no se crearon las ventas de prueba de H28.');
+  } else {
+    const p = (i: number) => platillos[i % platillos.length];
+    const idH28 = (prefijo: string, n: number) =>
+      `${prefijo}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    let item = 0;
+
+    // Crea pedidos con sus platillos y los cobra con un solo pago y comprobante.
+    const vender = async (
+      n: number,
+      diasAtras: number,
+      pedidos: { cancelado?: boolean; items: [number, number][] }[],
+      mesa?: { tableId: string },
+    ) => {
+      const receiptId = idH28('28300000', n);
+      if (await prisma.receipt.findUnique({ where: { id: receiptId } })) return;
+      const fecha = enHoraLocal(diasAtras, 19, n);
+
+      await prisma.$transaction(async (tx) => {
+        const account = mesa
+          ? await tx.account.create({
+              data: {
+                id: idH28('28500000', n),
+                branchId: assignedBranch.id,
+                tableId: mesa.tableId,
+                waiterId: mesero.id,
+                status: AccountStatus.PAID,
+                createdAt: fecha,
+              },
+            })
+          : null;
+
+        let subtotal = new Prisma.Decimal(0);
+        const detalle: { productName: string; quantity: number; unitPrice: number; subtotal: number }[] = [];
+        let primerPedido = '';
+
+        for (const [k, pedido] of pedidos.entries()) {
+          const lineas = pedido.items.map(([indice, cantidad]) => {
+            const dish = p(indice);
+            return { dish, cantidad, sub: dish.price.mul(cantidad) };
+          });
+          const totalPedido = lineas.reduce((t, l) => t.plus(l.sub), new Prisma.Decimal(0));
+          const order = await tx.order.create({
+            data: {
+              id: idH28('28100000', n * 10 + k),
+              branchId: assignedBranch.id,
+              accountId: account?.id ?? null,
+              status: pedido.cancelado ? OrderStatus.CANCELLED : OrderStatus.DELIVERED,
+              total: totalPedido,
+              createdAt: fecha,
+              items: {
+                create: lineas.map((l) => ({
+                  id: idH28('28400000', ++item + n * 100),
+                  dishId: l.dish.id,
+                  quantity: l.cantidad,
+                  unitPrice: l.dish.price,
+                  subtotal: l.sub,
+                })),
+              },
+            },
+          });
+          if (!primerPedido) primerPedido = order.id;
+          if (pedido.cancelado) continue;
+          subtotal = subtotal.plus(totalPedido);
+          for (const l of lineas) {
+            detalle.push({
+              productName: l.dish.name,
+              quantity: l.cantidad,
+              unitPrice: l.dish.price.toNumber(),
+              subtotal: l.sub.toNumber(),
+            });
+          }
+        }
+
+        const tax = subtotal.mul(0.13).toDecimalPlaces(2);
+        const total = subtotal.plus(tax).toDecimalPlaces(2);
+        const { receiptCounter } = await tx.branch.update({
+          where: { id: assignedBranch.id },
+          data: { receiptCounter: { increment: 1 } },
+          select: { receiptCounter: true },
+        });
+        const payment = await tx.payment.create({
+          data: {
+            id: idH28('28200000', n),
+            branchId: assignedBranch.id,
+            accountId: account?.id ?? null,
+            orderId: account ? null : primerPedido,
+            userId: mesero.id,
+            method: PaymentMethod.CASH,
+            status: PaymentStatus.APPROVED,
+            amount: total,
+            amountReceived: total,
+            createdAt: fecha,
+          },
+        });
+        await tx.receipt.create({
+          data: {
+            id: receiptId,
+            branchId: assignedBranch.id,
+            paymentId: payment.id,
+            accountId: account?.id ?? null,
+            orderId: account ? null : primerPedido,
+            receiptNumber: receiptCounter,
+            issuedAt: fecha,
+            subtotal,
+            discount: 0,
+            tax,
+            total,
+            paymentMethod: PaymentMethod.CASH,
+            items: detalle,
+          },
+        });
+      });
+    };
+
+    // [índice de platillo, cantidad]
+    await vender(1, 1, [{ items: [[0, 3], [3, 2]] }]);
+    await vender(2, 2, [{ items: [[0, 2], [5, 4]] }]);
+    await vender(3, 3, [{ items: [[1, 3], [6, 1]] }]);
+    await vender(4, 4, [{ items: [[2, 5], [7, 2], [8, 1]] }]);
+    await vender(5, 5, [{ items: [[9, 1], [10, 2], [11, 1]] }]);
+
+    const mesa = await prisma.restaurantTable.findFirst({
+      where: { branchId: assignedBranch.id },
+      orderBy: { number: 'asc' },
+    });
+    if (mesa) {
+      // Cuenta de mesa: el segundo pedido está cancelado y no cuenta.
+      await vender(6, 2, [
+        { items: [[0, 2], [4, 3]] },
+        { cancelado: true, items: [[1, 10]] },
+      ], { tableId: mesa.id });
+    }
   }
 
   console.log(

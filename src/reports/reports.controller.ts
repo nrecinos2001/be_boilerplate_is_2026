@@ -1,7 +1,7 @@
 import { Controller, Get, Query, UseFilters } from '@nestjs/common';
 import { UserRole } from '../generated/prisma/client.js';
 import { Roles } from '../auth/decorators/roles.decorator.js';
-import { PeakHoursQueryDto, SalesQueryDto } from './dto.js';
+import { PeakHoursQueryDto, SalesQueryDto, TopDishesQueryDto } from './dto.js';
 import { ReportsErrorFilter } from './reports-error.filter.js';
 import { ReportsService } from './reports.service.js';
 
@@ -21,6 +21,11 @@ export class ReportsController {
   @Get('reports/sales')
   sales(@Query() query: SalesQueryDto) {
     return this.reports.sales(query);
+  }
+
+  @Get('reports/top-dishes')
+  topDishes(@Query() query: TopDishesQueryDto) {
+    return this.reports.topDishes(query);
   }
 
   @Get('reports/peak-hours')

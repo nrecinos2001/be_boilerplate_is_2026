@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/services/prisma.service.js';
-import { PeakHoursQueryDto, SalesQueryDto } from './dto.js';
+import { PeakHoursQueryDto, SalesQueryDto, TopDishesQueryDto } from './dto.js';
 import { armarBloques } from './peak-hours.js';
 import { OFFSET_HORAS, validarPeriodo } from './period.js';
 
@@ -30,15 +30,7 @@ export class ReportsService {
   async sales(query: SalesQueryDto) {
     const periodo = validarPeriodo(query.from, query.to);
 
-    if (query.branchId !== undefined) {
-      const existe =
-        UUID.test(query.branchId) &&
-        (await this.prisma.branch.findUnique({
-          where: { id: query.branchId },
-          select: { id: true },
-        }));
-      if (!existe) throw new NotFoundException('La sucursal no existe.');
-    }
+    await this.validarSucursalOpcional(query.branchId);
 
     const grupos = await this.prisma.receipt.groupBy({
       by: ['branchId'],
@@ -85,6 +77,63 @@ export class ReportsService {
       receiptCount: branches.reduce((suma, b) => suma + b.receiptCount, 0),
       branches,
     };
+  }
+
+  // Sucursal opcional de H27 y H28: si se envía, debe existir.
+  private async validarSucursalOpcional(branchId: string | undefined) {
+    if (branchId === undefined) return;
+    const existe =
+      UUID.test(branchId) &&
+      (await this.prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { id: true },
+      }));
+    if (!existe) throw new NotFoundException('La sucursal no existe.');
+  }
+
+  // H28: los 10 platillos con más unidades vendidas en el período. Se
+  // parte de los comprobantes y se llega a los pedidos por el pago: los
+  // de la cuenta de mesa (accountId) o el pedido para llevar (orderId).
+  // Los pedidos cancelados no cuentan aunque la cuenta esté pagada.
+  async topDishes(query: TopDishesQueryDto) {
+    const periodo = validarPeriodo(query.from, query.to);
+    await this.validarSucursalOpcional(query.branchId);
+
+    const filtroSucursal = query.branchId
+      ? Prisma.sql`AND r.branch_id = ${query.branchId}::uuid`
+      : Prisma.empty;
+
+    const filas = await this.prisma.$queryRaw<
+      { dishId: string; dishName: string; category: string; unitsSold: number; revenue: Prisma.Decimal }[]
+    >(Prisma.sql`
+      SELECT d.id AS "dishId", d.name AS "dishName", c.name AS category,
+             SUM(oi.quantity)::int AS "unitsSold",
+             SUM(oi.quantity * oi.unit_price) AS revenue
+      FROM receipts r
+      JOIN payments p ON p.id = r.payment_id
+      JOIN orders o ON (o.account_id = p.account_id OR o.id = p.order_id)
+      JOIN order_items oi ON oi.order_id = o.id
+      JOIN dishes d ON d.id = oi.dish_id
+      JOIN categories c ON c.id = d.category_id
+      WHERE r.issued_at >= ${periodo.desde}
+        AND r.issued_at < ${periodo.hasta}
+        AND o.status::text <> 'CANCELLED'
+        ${filtroSucursal}
+      GROUP BY d.id, d.name, c.name`);
+
+    // Orden: unidades, luego ingreso, luego nombre (A-Z); primeros 10.
+    const items = filas
+      .map((f) => ({ ...f, revenue: dinero(new Prisma.Decimal(f.revenue)) }))
+      .sort(
+        (a, b) =>
+          b.unitsSold - a.unitsSold ||
+          b.revenue - a.revenue ||
+          a.dishName.localeCompare(b.dishName, 'es'),
+      )
+      .slice(0, 10)
+      .map((f, i) => ({ position: i + 1, ...f }));
+
+    return { from: periodo.from, to: periodo.to, items };
   }
 
   // H29: pedidos por hora de la sucursal en el período.
