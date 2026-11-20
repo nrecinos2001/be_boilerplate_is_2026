@@ -16,3 +16,19 @@ export class PeakHoursQueryDto {
   @IsString({ message: 'to debe ser una fecha aaaa-mm-dd' })
   to?: string;
 }
+
+// Parámetros del reporte de ventas totales (H27). branchId es opcional:
+// sin valor incluye todas las sucursales.
+export class SalesQueryDto {
+  @IsOptional()
+  @IsString({ message: 'branchId debe ser texto' })
+  branchId?: string;
+
+  @IsOptional()
+  @IsString({ message: 'from debe ser una fecha aaaa-mm-dd' })
+  from?: string;
+
+  @IsOptional()
+  @IsString({ message: 'to debe ser una fecha aaaa-mm-dd' })
+  to?: string;
+}
